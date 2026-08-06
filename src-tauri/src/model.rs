@@ -50,6 +50,20 @@ pub struct ProductView {
     pub status: ProductStatus,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum LaunchMode {
+    Normal,
+    Injected,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LaunchPreparation {
+    pub mode: LaunchMode,
+    pub restart_required: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::ProductProfile;

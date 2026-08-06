@@ -1,5 +1,6 @@
 mod commands;
 mod model;
+mod product;
 mod state;
 
 use state::AppState;
