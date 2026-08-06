@@ -7,7 +7,7 @@ use std::{
 
 use tokio::sync::Mutex;
 
-use crate::model::{ModuleSummary, ProductProfile, ProductStatus};
+use crate::model::{ModuleSummary, ProductProfile, ProductStatus, ProductView};
 
 #[derive(Debug, Default, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -25,6 +25,65 @@ pub struct AppStateData {
 pub struct AppState {
     pub data: Mutex<AppStateData>,
     settings_path: PathBuf,
+}
+
+impl AppStateData {
+    pub fn product_views(&self) -> Vec<ProductView> {
+        self.profiles
+            .iter()
+            .map(|profile| {
+                let enabled = self.settings.enabled_modules.get(&profile.id);
+                let modules = self
+                    .modules
+                    .iter()
+                    .cloned()
+                    .map(|mut module| {
+                        module.enabled_for = enabled
+                            .filter(|ids| ids.contains(&module.id))
+                            .map(|_| vec![profile.id.clone()])
+                            .unwrap_or_default();
+                        module
+                    })
+                    .collect();
+
+                ProductView {
+                    profile: profile.clone(),
+                    modules,
+                    status: self
+                        .statuses
+                        .get(&profile.id)
+                        .expect("built-in product has status")
+                        .clone(),
+                }
+            })
+            .collect()
+    }
+
+    pub fn set_module_enabled(
+        &mut self,
+        product_id: &str,
+        module_id: &str,
+        enabled: bool,
+    ) -> Result<(), String> {
+        if !self.profiles.iter().any(|profile| profile.id == product_id) {
+            return Err(format!("未知产品：{product_id}"));
+        }
+        if !self.modules.iter().any(|module| module.id == module_id) {
+            return Err(format!("未知模块：{module_id}"));
+        }
+
+        let modules = self
+            .settings
+            .enabled_modules
+            .entry(product_id.to_string())
+            .or_default();
+        if enabled && !modules.iter().any(|id| id == module_id) {
+            modules.push(module_id.to_string());
+        } else if !enabled {
+            modules.retain(|id| id != module_id);
+        }
+        Ok(())
+    }
 }
 
 impl AppState {
@@ -70,8 +129,56 @@ impl AppState {
         fs::write(&temporary, json).map_err(|error| error.to_string())?;
         fs::rename(temporary, &self.settings_path).map_err(|error| error.to_string())
     }
+
+    pub async fn product_views(&self) -> Vec<ProductView> {
+        self.data.lock().await.product_views()
+    }
+
+    pub async fn set_module_enabled(
+        &self,
+        product_id: &str,
+        module_id: &str,
+        enabled: bool,
+    ) -> Result<(), String> {
+        let mut data = self.data.lock().await;
+        data.set_module_enabled(product_id, module_id, enabled)?;
+        self.persist_settings(&data.settings)
+    }
 }
 
 fn temporary_path(path: &Path) -> PathBuf {
     path.with_extension("json.tmp")
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use super::AppState;
+
+    #[test]
+    fn module_selection_persists() {
+        let unique = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let config_dir = std::env::temp_dir().join(format!("cdp-injector-{unique}"));
+        let state = AppState::load(config_dir.clone()).unwrap();
+
+        {
+            let mut data = state.data.blocking_lock();
+            data.set_module_enabled("codex", "dev.cdp-injector.codex-theme", true)
+                .unwrap();
+            state.persist_settings(&data.settings).unwrap();
+        }
+
+        let reloaded = AppState::load(config_dir.clone()).unwrap();
+        let products = reloaded.data.blocking_lock().product_views();
+        assert_eq!(
+            products[0].modules[0].enabled_for,
+            vec!["codex".to_string()]
+        );
+
+        std::fs::remove_dir_all(config_dir).unwrap();
+    }
 }

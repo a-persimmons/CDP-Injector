@@ -1,3 +1,4 @@
+mod commands;
 mod model;
 mod state;
 
@@ -12,6 +13,10 @@ pub fn run() {
             tauri::tray::TrayIconBuilder::new().build(app)?;
             Ok(())
         })
+        .invoke_handler(tauri::generate_handler![
+            commands::list_products,
+            commands::set_module_enabled
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

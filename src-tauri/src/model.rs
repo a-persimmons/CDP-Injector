@@ -42,6 +42,14 @@ pub struct ProductStatus {
     pub module_errors: std::collections::BTreeMap<String, String>,
 }
 
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProductView {
+    pub profile: ProductProfile,
+    pub modules: Vec<ModuleSummary>,
+    pub status: ProductStatus,
+}
+
 #[cfg(test)]
 mod tests {
     use super::ProductProfile;
