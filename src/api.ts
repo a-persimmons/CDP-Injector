@@ -34,6 +34,11 @@ export type ProductView = {
   };
 };
 
+export type LaunchPreparation = {
+  mode: "normal" | "injected";
+  restartRequired: boolean;
+};
+
 export function listProducts() {
   return invoke<ProductView[]>("list_products");
 }
@@ -44,4 +49,12 @@ export function setModuleEnabled(
   enabled: boolean,
 ) {
   return invoke<void>("set_module_enabled", { productId, moduleId, enabled });
+}
+
+export function prepareLaunch(productId: string) {
+  return invoke<LaunchPreparation>("prepare_launch", { productId });
+}
+
+export function launchProduct(productId: string) {
+  return invoke<void>("launch_product", { productId });
 }

@@ -84,6 +84,15 @@ impl AppStateData {
         }
         Ok(())
     }
+
+    pub fn set_product_phase(&mut self, product_id: &str, phase: &str) -> Result<(), String> {
+        let status = self
+            .statuses
+            .get_mut(product_id)
+            .ok_or_else(|| format!("未知产品：{product_id}"))?;
+        status.phase = phase.to_string();
+        Ok(())
+    }
 }
 
 impl AppState {
@@ -144,6 +153,29 @@ impl AppState {
         data.set_module_enabled(product_id, module_id, enabled)?;
         self.persist_settings(&data.settings)
     }
+
+    pub async fn launch_data(&self, product_id: &str) -> Result<(ProductProfile, bool), String> {
+        let data = self.data.lock().await;
+        let profile = data
+            .profiles
+            .iter()
+            .find(|profile| profile.id == product_id)
+            .cloned()
+            .ok_or_else(|| format!("未知产品：{product_id}"))?;
+        let has_enabled_modules = data
+            .settings
+            .enabled_modules
+            .get(product_id)
+            .is_some_and(|modules| !modules.is_empty());
+        Ok((profile, has_enabled_modules))
+    }
+
+    pub async fn set_product_phase(&self, product_id: &str, phase: &str) -> Result<(), String> {
+        self.data
+            .lock()
+            .await
+            .set_product_phase(product_id, phase)
+    }
 }
 
 fn temporary_path(path: &Path) -> PathBuf {
@@ -180,5 +212,15 @@ mod tests {
         );
 
         std::fs::remove_dir_all(config_dir).unwrap();
+    }
+
+    #[test]
+    fn product_phase_updates() {
+        let state = AppState::load(std::env::temp_dir()).unwrap();
+        let mut data = state.data.blocking_lock();
+
+        data.set_product_phase("codex", "starting").unwrap();
+
+        assert_eq!(data.product_views()[0].status.phase, "starting");
     }
 }

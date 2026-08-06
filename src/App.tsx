@@ -16,7 +16,9 @@ import {
   Warning,
 } from "@phosphor-icons/react";
 import {
+  launchProduct,
   listProducts,
+  prepareLaunch,
   setModuleEnabled,
   type ProductView,
 } from "./api";
@@ -62,6 +64,8 @@ export function App() {
   const [view, setView] = useState<View>("modules");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState("");
+  const [launching, setLaunching] = useState(false);
+  const [restartPending, setRestartPending] = useState(false);
   const preview = import.meta.env.DEV && location.search === "?preview=1";
 
   async function reload() {
@@ -107,6 +111,36 @@ export function App() {
       setError(String(reason));
     } finally {
       setSaving("");
+    }
+  }
+
+  async function startProduct() {
+    setLaunching(true);
+    setRestartPending(false);
+    try {
+      await launchProduct(product.profile.id);
+      await reload();
+    } catch (reason) {
+      await reload();
+      setError(String(reason));
+    } finally {
+      setLaunching(false);
+    }
+  }
+
+  async function requestLaunch() {
+    setLaunching(true);
+    try {
+      const preparation = await prepareLaunch(product.profile.id);
+      if (preparation.restartRequired) {
+        setRestartPending(true);
+        return;
+      }
+      await startProduct();
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setLaunching(false);
     }
   }
 
@@ -261,12 +295,39 @@ export function App() {
 
         <div className="launch-area">
           <p>{product.profile.preview.restartMessage}</p>
-          <button className="primary-button" type="button" disabled>
+          <button
+            className="primary-button"
+            type="button"
+            disabled={preview || launching}
+            onClick={() => void requestLaunch()}
+          >
             <Play size={18} weight="bold" />
-            启动 Codex
+            {launching ? "正在启动…" : "启动 Codex"}
           </button>
         </div>
       </aside>
+
+      {restartPending && (
+        <div className="dialog-backdrop" role="presentation">
+          <section
+            className="confirm-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="restart-title"
+          >
+            <h2 id="restart-title">重新启动 Codex？</h2>
+            <p>{product.profile.preview.restartMessage}</p>
+            <div className="dialog-actions">
+              <button type="button" onClick={() => setRestartPending(false)}>
+                取消
+              </button>
+              <button type="button" onClick={() => void startProduct()}>
+                退出并重新启动
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
