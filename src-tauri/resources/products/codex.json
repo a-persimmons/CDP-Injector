@@ -1,0 +1,21 @@
+{
+  "id": "codex",
+  "name": "Codex",
+  "applicationPaths": [
+    "/Applications/ChatGPT.app",
+    "/Applications/Codex.app"
+  ],
+  "processNames": ["ChatGPT", "Codex"],
+  "contexts": [
+    {
+      "id": "main",
+      "targetType": "page",
+      "urlPrefixes": ["app://"],
+      "excludeUrlContains": ["global-dictation"]
+    }
+  ],
+  "preview": {
+    "supported": false,
+    "restartMessage": "将退出并重新启动 Codex"
+  }
+}
