@@ -1,6 +1,7 @@
 use crate::{
     model::{LaunchPreparation, ProductView},
     product,
+    session::ProductSession,
     state::AppState,
 };
 
@@ -58,6 +59,7 @@ pub async fn launch_product(
         )
         .await?;
 
+    let contexts = profile.contexts.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         product::launch_product(&profile, preparation.mode)
     })
@@ -65,9 +67,26 @@ pub async fn launch_product(
     .map_err(|error| error.to_string())?;
 
     match result {
-        Ok(Some(_port)) => state
-            .set_product_phase(&product_id, "connecting to CDP")
-            .await,
+        Ok(Some(port)) => {
+            state
+                .set_product_phase(&product_id, "connecting to CDP")
+                .await?;
+            let mut session = ProductSession::new(port, contexts);
+            if let Err(error) = session.wait_for_target().await {
+                state
+                    .set_product_phase(&product_id, "launch failed")
+                    .await?;
+                return Err(error);
+            }
+            if let Err(error) = session.probe().await {
+                state
+                    .set_product_phase(&product_id, "launch failed")
+                    .await?;
+                return Err(error);
+            }
+            state.replace_session(product_id, session).await;
+            Ok(())
+        }
         Ok(None) => state
             .set_product_phase(&product_id, "running normally")
             .await,

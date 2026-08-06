@@ -1,6 +1,8 @@
+mod cdp;
 mod commands;
 mod model;
 mod product;
+mod session;
 mod state;
 
 use state::AppState;

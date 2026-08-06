@@ -3,11 +3,15 @@ use std::{
     fs,
     io::ErrorKind,
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use tokio::sync::Mutex;
 
-use crate::model::{ModuleSummary, ProductProfile, ProductStatus, ProductView};
+use crate::{
+    model::{ModuleSummary, ProductProfile, ProductStatus, ProductView},
+    session::ProductSession,
+};
 
 #[derive(Debug, Default, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -24,6 +28,7 @@ pub struct AppStateData {
 
 pub struct AppState {
     pub data: Mutex<AppStateData>,
+    pub sessions: Mutex<BTreeMap<String, Arc<Mutex<ProductSession>>>>,
     settings_path: PathBuf,
 }
 
@@ -126,6 +131,7 @@ impl AppState {
                 )]),
                 settings,
             }),
+            sessions: Mutex::new(BTreeMap::new()),
             settings_path,
         })
     }
@@ -175,6 +181,19 @@ impl AppState {
             .lock()
             .await
             .set_product_phase(product_id, phase)
+    }
+
+    pub async fn replace_session(
+        &self,
+        product_id: String,
+        session: ProductSession,
+    ) -> Arc<Mutex<ProductSession>> {
+        let session = Arc::new(Mutex::new(session));
+        self.sessions
+            .lock()
+            .await
+            .insert(product_id, session.clone());
+        session
     }
 }
 
