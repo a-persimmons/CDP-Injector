@@ -226,11 +226,21 @@ git commit -m "feat: inject the built-in Codex theme"
 **Files:**
 - Modify only if verification finds a defect: `src/**`, `src-tauri/**`
 
-**Step 1: Launch the Tauri application**
+**Step 1: Launch a detached Tauri application bundle**
 
-Run: `pnpm tauri dev`
+Build the frontend, create an unsigned debug `.app`, and launch it through
+macOS LaunchServices:
 
-Expected: the 980 x 680 CDP Injector window opens with real Tauri commands.
+```bash
+pnpm build
+pnpm tauri build --debug --bundles app --no-sign
+open -n "src-tauri/target/debug/bundle/macos/CDP Injector.app"
+```
+
+Expected: the 980 x 680 CDP Injector window opens with real Tauri commands and
+remains running when Codex exits. Do not use `tauri dev` for this checkpoint;
+its process can inherit the active Codex development session and be terminated
+with it.
 
 **Step 2: Verify normal launch**
 
