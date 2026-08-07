@@ -6,8 +6,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::model::{LaunchPreparation, ProductProfile};
 pub use crate::model::LaunchMode;
+use crate::model::{LaunchPreparation, ProductProfile};
 
 pub fn decide_launch(has_enabled_modules: bool, is_running: bool) -> (LaunchMode, bool) {
     if has_enabled_modules {
@@ -22,18 +22,14 @@ pub fn prepare_launch(
     has_enabled_modules: bool,
 ) -> Result<LaunchPreparation, String> {
     let _ = resolve_application(profile)?;
-    let (mode, restart_required) =
-        decide_launch(has_enabled_modules, is_product_running(profile)?);
+    let (mode, restart_required) = decide_launch(has_enabled_modules, is_product_running(profile)?);
     Ok(LaunchPreparation {
         mode,
         restart_required,
     })
 }
 
-pub fn launch_product(
-    profile: &ProductProfile,
-    mode: LaunchMode,
-) -> Result<Option<u16>, String> {
+pub fn launch_product(profile: &ProductProfile, mode: LaunchMode) -> Result<Option<u16>, String> {
     let application = resolve_application(profile)?;
 
     if mode == LaunchMode::Normal {

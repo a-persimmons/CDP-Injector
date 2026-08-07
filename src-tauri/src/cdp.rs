@@ -3,11 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
-use tokio_tungstenite::{
-    connect_async,
-    tungstenite::Message,
-    MaybeTlsStream, WebSocketStream,
-};
+use tokio_tungstenite::{connect_async, tungstenite::Message, MaybeTlsStream, WebSocketStream};
 
 use crate::model::TargetContext;
 
@@ -123,7 +119,10 @@ mod tests {
 
         assert!(matches_target(&target("page", "app://codex"), &context));
         assert!(!matches_target(&target("worker", "app://codex"), &context));
-        assert!(!matches_target(&target("page", "https://example.com"), &context));
+        assert!(!matches_target(
+            &target("page", "https://example.com"),
+            &context
+        ));
         assert!(!matches_target(
             &target("page", "app://global-dictation"),
             &context

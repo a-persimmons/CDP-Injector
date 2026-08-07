@@ -117,13 +117,16 @@ export function App() {
   async function startProduct() {
     setLaunching(true);
     setRestartPending(false);
+    let launchError = "";
+    const refreshTimer = window.setInterval(() => void reload(), 500);
     try {
       await launchProduct(product.profile.id);
-      await reload();
     } catch (reason) {
-      await reload();
-      setError(String(reason));
+      launchError = String(reason);
     } finally {
+      window.clearInterval(refreshTimer);
+      await reload();
+      if (launchError) setError(launchError);
       setLaunching(false);
     }
   }
@@ -152,6 +155,10 @@ export function App() {
 
   const phase = phaseLabels[product.status.phase] ?? product.status.phase;
   const moduleErrors = Object.entries(product.status.moduleErrors);
+  const cdpConnected = ["injecting", "injected", "partially failed"].includes(
+    product.status.phase,
+  );
+  const targetReady = cdpConnected;
 
   return (
     <div className="app-shell">
@@ -227,7 +234,13 @@ export function App() {
                     <div className="module-controls">
                       <span className={`module-state ${moduleError ? "error" : ""}`}>
                         <i />
-                        {moduleError ? "失败" : enabled ? "已就绪" : "未启用"}
+                        {moduleError
+                          ? "失败"
+                          : enabled && product.status.phase === "injected"
+                            ? "运行中"
+                            : enabled
+                              ? "已就绪"
+                              : "未启用"}
                       </span>
                       <label className="switch">
                         <input
@@ -271,9 +284,24 @@ export function App() {
         <h2>运行状态</h2>
         <div className="session-steps">
           <StatusStep icon={AppWindow} label={`Codex ${phase}`} />
-          <StatusStep icon={Link} label="CDP 未连接" />
-          <StatusStep icon={Clock} label="目标等待中" />
-          <StatusStep icon={PuzzlePiece} label="模块未注入" />
+          <StatusStep
+            icon={Link}
+            label={cdpConnected ? "CDP 已连接" : "CDP 未连接"}
+          />
+          <StatusStep
+            icon={Clock}
+            label={targetReady ? "目标已连接" : "目标等待中"}
+          />
+          <StatusStep
+            icon={PuzzlePiece}
+            label={
+              product.status.phase === "injected"
+                ? "模块已注入"
+                : product.status.phase === "injecting"
+                  ? "模块正在注入"
+                  : "模块未注入"
+            }
+          />
         </div>
 
         {product.modules.some((module) => module.id.includes("taskboard")) && (

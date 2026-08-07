@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "dev.cdp-injector.codex-theme",
+  "name": "Codex 主题",
+  "version": "0.1.0",
+  "description": "用于验证 Codex CDP 注入链路的最小主题",
+  "hubApi": 1,
+  "targets": [
+    {
+      "product": "codex",
+      "context": "main"
+    }
+  ],
+  "inject": {
+    "styles": ["inject/index.css"],
+    "runAt": "document-start"
+  },
+  "capabilities": ["renderer-injection"]
+}

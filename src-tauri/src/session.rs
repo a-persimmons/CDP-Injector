@@ -11,6 +11,8 @@ pub struct ProductSession {
     pub port: u16,
     contexts: Vec<TargetContext>,
     connections: BTreeMap<String, Arc<CdpConnection>>,
+    script_ids: BTreeMap<String, String>,
+    source: Option<String>,
 }
 
 impl ProductSession {
@@ -19,6 +21,8 @@ impl ProductSession {
             port,
             contexts,
             connections: BTreeMap::new(),
+            script_ids: BTreeMap::new(),
+            source: None,
         }
     }
 
@@ -27,7 +31,7 @@ impl ProductSession {
         // ponytail: polling is enough for the first Codex target; use CDP target
         // discovery events if measured replacement latency becomes a problem.
         while tokio::time::Instant::now() < deadline {
-            if self.refresh_targets().await? > 0 {
+            if self.refresh_targets().await.unwrap_or(0) > 0 {
                 return Ok(());
             }
             tokio::time::sleep(Duration::from_millis(250)).await;
@@ -36,10 +40,9 @@ impl ProductSession {
     }
 
     pub async fn refresh_targets(&mut self) -> Result<usize, String> {
-        let targets = match list_targets(self.port).await {
-            Ok(targets) => targets,
-            Err(_) => return Ok(0),
-        };
+        let targets = list_targets(self.port)
+            .await
+            .map_err(|error| error.to_string())?;
         let matching: Vec<_> = targets
             .into_iter()
             .filter(|target| {
@@ -51,6 +54,8 @@ impl ProductSession {
 
         self.connections
             .retain(|target_id, _| matching.iter().any(|target| &target.id == target_id));
+        self.script_ids
+            .retain(|target_id, _| self.connections.contains_key(target_id));
         for target in matching {
             if !self.connections.contains_key(&target.id) {
                 let connection = CdpConnection::connect(&target.web_socket_debugger_url)
@@ -63,7 +68,11 @@ impl ProductSession {
     }
 
     pub async fn probe(&self) -> Result<(), String> {
-        let connection = self.connections.values().next().ok_or("没有匹配的 CDP 目标")?;
+        let connection = self
+            .connections
+            .values()
+            .next()
+            .ok_or("没有匹配的 CDP 目标")?;
         let result = connection
             .send(
                 "Runtime.evaluate",
@@ -79,5 +88,84 @@ impl ProductSession {
         } else {
             Err("Codex CDP 探测返回异常".into())
         }
+    }
+
+    pub async fn install_source(&mut self, source: String) -> Result<(), String> {
+        self.source = Some(source);
+        self.inject_missing_targets().await
+    }
+
+    pub async fn refresh_and_inject(&mut self) -> Result<(), String> {
+        self.refresh_targets().await?;
+        self.inject_missing_targets().await
+    }
+
+    async fn inject_missing_targets(&mut self) -> Result<(), String> {
+        let Some(source) = self.source.clone() else {
+            return Ok(());
+        };
+        let pending: Vec<_> = self
+            .connections
+            .iter()
+            .filter(|(target_id, _)| !self.script_ids.contains_key(*target_id))
+            .map(|(target_id, connection)| (target_id.clone(), connection.clone()))
+            .collect();
+
+        for (target_id, connection) in pending {
+            connection
+                .send("Page.enable", json!({}))
+                .await
+                .map_err(|error| error.to_string())?;
+            connection
+                .send("Runtime.enable", json!({}))
+                .await
+                .map_err(|error| error.to_string())?;
+            let result = connection
+                .send(
+                    "Page.addScriptToEvaluateOnNewDocument",
+                    json!({ "source": source }),
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            let identifier = result
+                .get("identifier")
+                .and_then(serde_json::Value::as_str)
+                .ok_or("CDP 未返回注入脚本标识")?
+                .to_string();
+            let current = connection
+                .send(
+                    "Runtime.evaluate",
+                    json!({ "expression": source, "awaitPromise": true }),
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            if let Some(exception) = current.get("exceptionDetails") {
+                return Err(format!("主题注入失败：{exception}"));
+            }
+            self.script_ids.insert(target_id, identifier);
+        }
+        Ok(())
+    }
+
+    pub async fn remove_source(&mut self, cleanup: serde_json::Value) -> Result<(), String> {
+        let installed = std::mem::take(&mut self.script_ids);
+        self.source = None;
+        for (target_id, identifier) in installed {
+            let Some(connection) = self.connections.get(&target_id) else {
+                continue;
+            };
+            connection
+                .send(
+                    "Page.removeScriptToEvaluateOnNewDocument",
+                    json!({ "identifier": identifier }),
+                )
+                .await
+                .map_err(|error| error.to_string())?;
+            connection
+                .send("Runtime.evaluate", cleanup.clone())
+                .await
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
     }
 }

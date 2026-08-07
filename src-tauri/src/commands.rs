@@ -1,4 +1,5 @@
 use crate::{
+    injection,
     model::{LaunchPreparation, ProductView},
     product,
     session::ProductSession,
@@ -19,7 +20,38 @@ pub async fn set_module_enabled(
 ) -> Result<(), String> {
     state
         .set_module_enabled(&product_id, &module_id, enabled)
-        .await
+        .await?;
+
+    if module_id == "dev.cdp-injector.codex-theme" {
+        if let Some(session) = state.session(&product_id).await {
+            state
+                .set_product_phase(
+                    &product_id,
+                    if enabled {
+                        "injecting"
+                    } else {
+                        "running normally"
+                    },
+                )
+                .await?;
+            let mut session = session.lock().await;
+            let result = if enabled {
+                injection::install_theme(&mut session).await
+            } else {
+                injection::remove_theme(&mut session).await
+            };
+            if let Err(error) = result {
+                state
+                    .set_product_phase(&product_id, "partially failed")
+                    .await?;
+                return Err(error);
+            }
+            if enabled {
+                state.set_product_phase(&product_id, "injected").await?;
+            }
+        }
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -84,12 +116,38 @@ pub async fn launch_product(
                     .await?;
                 return Err(error);
             }
-            state.replace_session(product_id, session).await;
+            if has_enabled_modules {
+                state.set_product_phase(&product_id, "injecting").await?;
+                if let Err(error) = injection::install_theme(&mut session).await {
+                    state
+                        .set_product_phase(&product_id, "partially failed")
+                        .await?;
+                    return Err(error);
+                }
+            }
+            let session = state.replace_session(product_id.clone(), session).await;
+            if has_enabled_modules {
+                state.set_product_phase(&product_id, "injected").await?;
+            }
+            let session = std::sync::Arc::downgrade(&session);
+            tauri::async_runtime::spawn(async move {
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    let Some(session) = session.upgrade() else {
+                        break;
+                    };
+                    if session.lock().await.refresh_and_inject().await.is_err() {
+                        break;
+                    }
+                }
+            });
             Ok(())
         }
-        Ok(None) => state
-            .set_product_phase(&product_id, "running normally")
-            .await,
+        Ok(None) => {
+            state
+                .set_product_phase(&product_id, "running normally")
+                .await
+        }
         Err(error) => {
             state
                 .set_product_phase(&product_id, "launch failed")

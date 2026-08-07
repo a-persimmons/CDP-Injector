@@ -1,0 +1,13 @@
+:root {
+  --cdp-injector-accent: #8b5cf6;
+}
+
+body {
+  outline: 2px solid var(--cdp-injector-accent);
+  outline-offset: -2px;
+}
+
+::selection {
+  color: white;
+  background: #6d4aff;
+}

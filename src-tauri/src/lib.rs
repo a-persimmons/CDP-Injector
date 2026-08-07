@@ -1,5 +1,6 @@
 mod cdp;
 mod commands;
+mod injection;
 mod model;
 mod product;
 mod session;

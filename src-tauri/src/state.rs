@@ -177,10 +177,7 @@ impl AppState {
     }
 
     pub async fn set_product_phase(&self, product_id: &str, phase: &str) -> Result<(), String> {
-        self.data
-            .lock()
-            .await
-            .set_product_phase(product_id, phase)
+        self.data.lock().await.set_product_phase(product_id, phase)
     }
 
     pub async fn replace_session(
@@ -194,6 +191,10 @@ impl AppState {
             .await
             .insert(product_id, session.clone());
         session
+    }
+
+    pub async fn session(&self, product_id: &str) -> Option<Arc<Mutex<ProductSession>>> {
+        self.sessions.lock().await.get(product_id).cloned()
     }
 }
 
