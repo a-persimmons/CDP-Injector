@@ -1,6 +1,6 @@
 [package]
 name = "cdp-injector"
-version = "0.1.0"
+version = "0.1.1"
 description = "CDP Injector desktop application"
 edition = "2021"
 
