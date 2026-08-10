@@ -47,7 +47,7 @@ function paths(lang, page) {
     modules: `${prefix}${lang}/modules/`,
     download: `${prefix}${lang}/download/`,
     alternate: `${prefix}${other}/${pagePath}`,
-    css: `${prefix}assets/site.css`,
+    css: `${prefix}assets/site.css?v=${version}-icon`,
     js: `${prefix}assets/site.js`,
     icon: `${prefix}assets/icon.png`,
     screenshot: `${prefix}assets/app.png`,
