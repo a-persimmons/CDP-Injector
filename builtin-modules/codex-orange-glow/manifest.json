@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "dev.cdp-injector.codex-orange-glow",
+  "name": "Codex 橙色光框",
+  "version": "0.1.0",
+  "description": "用橙色发光边框验证 Codex 多模块注入",
+  "hubApi": 1,
+  "targets": [
+    {
+      "product": "codex",
+      "context": "main"
+    }
+  ],
+  "inject": {
+    "styles": ["inject/index.css"],
+    "runAt": "document-start"
+  },
+  "capabilities": ["renderer-injection"]
+}

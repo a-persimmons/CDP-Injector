@@ -2,6 +2,7 @@ mod cdp;
 mod commands;
 mod injection;
 mod model;
+mod module_service;
 mod product;
 mod session;
 mod state;
@@ -21,6 +22,7 @@ pub fn run() {
             commands::list_products,
             commands::set_module_enabled,
             commands::prepare_launch,
+            commands::open_module_service,
             commands::launch_product
         ])
         .run(tauri::generate_context!())

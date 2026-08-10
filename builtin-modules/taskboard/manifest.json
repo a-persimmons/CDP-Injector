@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "dev.dashi.taskboard",
+  "name": "任务看板",
+  "version": "0.1.0",
+  "description": "在 Codex 中管理本地任务与工作流",
+  "targets": ["codex"],
+  "capabilities": [
+    "renderer-injection",
+    "local-service",
+    "module-data",
+    "csp-bypass"
+  ],
+  "service": {
+    "entry": "service/index.mjs",
+    "healthPath": "/health",
+    "readyTimeoutMs": 10000
+  },
+  "inject": {
+    "entry": "inject/index.js"
+  }
+}

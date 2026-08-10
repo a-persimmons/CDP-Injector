@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "CDP Injector",
+  "productName": "CDP注入器",
   "version": "0.1.0",
   "identifier": "dev.cdp-injector.desktop",
   "build": {
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "CDP Injector",
+        "title": "CDP注入器",
         "width": 980,
         "height": 680
       }
@@ -24,7 +24,11 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "resources": ["resources/products/codex.json"],
+    "resources": {
+      "resources/products/codex.json": "resources/products/codex.json",
+      "resources/node": "resources/node",
+      "../builtin-modules/taskboard": "builtin-modules/taskboard"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

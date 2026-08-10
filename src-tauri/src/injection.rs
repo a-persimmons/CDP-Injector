@@ -2,42 +2,113 @@ use serde_json::json;
 
 use crate::session::ProductSession;
 
-const MODULE_ID: &str = "dev.cdp-injector.codex-theme";
-const STYLE_ID: &str = "cdp-injector-theme-style";
+pub const THEME_MODULE_ID: &str = "dev.cdp-injector.codex-theme";
+pub const ORANGE_GLOW_MODULE_ID: &str = "dev.cdp-injector.codex-orange-glow";
+pub const TASKBOARD_MODULE_ID: &str = "dev.dashi.taskboard";
+const THEME_STYLE_ID: &str = "cdp-injector-theme-style";
+const ORANGE_GLOW_STYLE_ID: &str = "cdp-injector-orange-glow-style";
 const RUNTIME: &str = include_str!("../resources/runtime/cdp-injector.js");
 const THEME_CSS: &str = include_str!("../../builtin-modules/codex-theme/inject/index.css");
+const ORANGE_GLOW_CSS: &str =
+    include_str!("../../builtin-modules/codex-orange-glow/inject/index.css");
+const TASKBOARD_SOURCE: &str = include_str!("../../builtin-modules/taskboard/inject/index.js");
 
-pub fn build_theme_source() -> String {
-    let css = serde_json::to_string(THEME_CSS).expect("built-in theme CSS serializes");
+fn build_style_source(module_id: &str, style_id: &str, css: &str) -> String {
+    let css = serde_json::to_string(css).expect("built-in CSS serializes");
     format!(
         r#"{RUNTIME}
 (() => {{
   const id = {style_id:?};
-  let style = document.getElementById(id);
-  if (!style) {{
-    style = document.createElement("style");
-    style.id = id;
-    style.dataset.cdpHubOwner = {module_id:?};
-    (document.head || document.documentElement).append(style);
-  }}
-  style.textContent = {css};
+  const apply = () => {{
+    const parent = document.head || document.documentElement;
+    if (!parent) return false;
+    let style = document.getElementById(id);
+    if (!style) {{
+      style = document.createElement("style");
+      style.id = id;
+      style.dataset.cdpHubOwner = {module_id:?};
+      parent.append(style);
+    }}
+    style.textContent = {css};
+    return Boolean(style.isConnected && style.sheet && style.sheet.cssRules.length);
+  }};
+  if (apply()) return true;
+  document.addEventListener("DOMContentLoaded", apply, {{ once: true }});
+  return true;
 }})();"#,
-        style_id = STYLE_ID,
-        module_id = MODULE_ID,
+        style_id = style_id,
+        module_id = module_id,
     )
 }
 
-pub async fn install_theme(session: &mut ProductSession) -> Result<(), String> {
-    session.install_source(build_theme_source()).await
+pub fn build_module_source(module_id: &str, service_url: Option<&str>) -> Result<String, String> {
+    match module_id {
+        THEME_MODULE_ID => Ok(build_style_source(
+            THEME_MODULE_ID,
+            THEME_STYLE_ID,
+            THEME_CSS,
+        )),
+        ORANGE_GLOW_MODULE_ID => Ok(build_style_source(
+            ORANGE_GLOW_MODULE_ID,
+            ORANGE_GLOW_STYLE_ID,
+            ORANGE_GLOW_CSS,
+        )),
+        TASKBOARD_MODULE_ID => {
+            let service_url = service_url.ok_or("任务看板服务尚未就绪")?;
+            let service_url =
+                serde_json::to_string(service_url).map_err(|error| error.to_string())?;
+            Ok(format!(
+                r#"{RUNTIME}
+(() => {{
+  const serviceUrl = {service_url};
+  globalThis.__CODEX_TASKBOARD_URL__ = serviceUrl;
+  globalThis.__CODEX_TASKBOARD_MANAGED_ORIGIN__ = new URL(serviceUrl).origin;
+  globalThis.__CODEX_TASKBOARD_SOURCE_HASH__ = serviceUrl;
+  {TASKBOARD_SOURCE}
+  return Boolean(globalThis.__codexTaskboardInjection__);
+}})();"#
+            ))
+        }
+        _ => Err(format!("未知内置模块：{module_id}")),
+    }
 }
 
-pub async fn remove_theme(session: &mut ProductSession) -> Result<(), String> {
+pub async fn install_module(
+    session: &mut ProductSession,
+    module_id: &str,
+    service_url: Option<&str>,
+) -> Result<(), String> {
+    session
+        .install_source(
+            module_id.to_string(),
+            build_module_source(module_id, service_url)?,
+            reload_renderer_after_install(module_id),
+        )
+        .await
+}
+
+fn reload_renderer_after_install(module_id: &str) -> bool {
+    module_id == TASKBOARD_MODULE_ID
+}
+
+pub async fn remove_module(session: &mut ProductSession, module_id: &str) -> Result<(), String> {
+    let expression = match module_id {
+        THEME_MODULE_ID => format!(
+            "document.getElementById({THEME_STYLE_ID:?})?.remove(); globalThis.cdpHub?.deactivate({module_id:?});"
+        ),
+        ORANGE_GLOW_MODULE_ID => format!(
+            "document.getElementById({ORANGE_GLOW_STYLE_ID:?})?.remove(); globalThis.cdpHub?.deactivate({module_id:?});"
+        ),
+        TASKBOARD_MODULE_ID => format!(
+            "globalThis.__codexTaskboardInjection__?.destroy?.(); delete globalThis.__CODEX_TASKBOARD_URL__; delete globalThis.__CODEX_TASKBOARD_MANAGED_ORIGIN__; delete globalThis.__CODEX_TASKBOARD_SOURCE_HASH__; globalThis.cdpHub?.deactivate({module_id:?});"
+        ),
+        _ => return Err(format!("未知内置模块：{module_id}")),
+    };
     session
         .remove_source(
+            module_id,
             json!({
-                "expression": format!(
-                    "document.getElementById({STYLE_ID:?})?.remove(); globalThis.cdpHub?.deactivate({MODULE_ID:?});"
-                ),
+                "expression": expression,
                 "awaitPromise": true
             }),
         )
@@ -46,15 +117,35 @@ pub async fn remove_theme(session: &mut ProductSession) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::build_theme_source;
+    use super::{
+        build_module_source, reload_renderer_after_install, ORANGE_GLOW_MODULE_ID,
+        TASKBOARD_MODULE_ID, THEME_MODULE_ID,
+    };
 
     #[test]
-    fn builds_theme_source() {
-        let source = build_theme_source();
+    fn builds_independent_module_sources() {
+        let theme = build_module_source(THEME_MODULE_ID, None).unwrap();
+        let glow = build_module_source(ORANGE_GLOW_MODULE_ID, None).unwrap();
 
-        assert!(source.contains("globalThis.cdpHub?.apiVersion === 1"));
-        assert!(source.contains("cdp-injector-theme-style"));
-        assert!(source.contains("dev.cdp-injector.codex-theme"));
-        assert_eq!(source.matches("--cdp-injector-accent").count(), 2);
+        assert!(theme.contains("cdp-injector-theme-style"));
+        assert!(theme.contains("--cdp-injector-accent"));
+        assert!(glow.contains("cdp-injector-orange-glow-style"));
+        assert!(glow.contains("--cdp-injector-orange"));
+        assert!(theme.contains("return Boolean"));
+        assert!(glow.contains("return Boolean"));
+        assert!(theme.contains("DOMContentLoaded"));
+    }
+
+    #[test]
+    fn taskboard_source_requires_and_uses_its_service_url() {
+        assert!(build_module_source(TASKBOARD_MODULE_ID, None).is_err());
+
+        let source =
+            build_module_source(TASKBOARD_MODULE_ID, Some("http://127.0.0.1:43123/")).unwrap();
+        assert!(source.contains("http://127.0.0.1:43123/"));
+        assert!(source.contains("__codexTaskboardInjection__"));
+        assert!(source.contains("return Boolean"));
+        assert!(reload_renderer_after_install(TASKBOARD_MODULE_ID));
+        assert!(!reload_renderer_after_install(THEME_MODULE_ID));
     }
 }

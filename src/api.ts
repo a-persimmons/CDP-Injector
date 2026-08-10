@@ -22,14 +22,23 @@ export type ModuleSummary = {
   name: string;
   version: string;
   enabledFor: string[];
+  hasService: boolean;
+  browserAccessible: boolean;
 };
 
 export type ProductView = {
   profile: ProductProfile;
   modules: ModuleSummary[];
+  services: {
+    moduleId: string;
+    host: string;
+    port: number;
+  }[];
   status: {
     productId: string;
     phase: string;
+    launchMode: "normal" | "injected" | null;
+    cdpStatus: "not used" | "connecting" | "connected" | "disconnected";
     moduleErrors: Record<string, string>;
   };
 };
@@ -57,4 +66,8 @@ export function prepareLaunch(productId: string) {
 
 export function launchProduct(productId: string) {
   return invoke<void>("launch_product", { productId });
+}
+
+export function openModuleService(moduleId: string) {
+  return invoke<void>("open_module_service", { moduleId });
 }

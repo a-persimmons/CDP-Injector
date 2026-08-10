@@ -15,6 +15,10 @@ dist
 dist-ssr
 *.local
 
+# Bundled runtimes and release artifacts are prepared during local/CI builds.
+src-tauri/resources/node/
+*.cdpmod
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

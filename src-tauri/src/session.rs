@@ -11,8 +11,8 @@ pub struct ProductSession {
     pub port: u16,
     contexts: Vec<TargetContext>,
     connections: BTreeMap<String, Arc<CdpConnection>>,
-    script_ids: BTreeMap<String, String>,
-    source: Option<String>,
+    script_ids: BTreeMap<(String, String), String>,
+    sources: BTreeMap<String, (String, bool)>,
 }
 
 impl ProductSession {
@@ -22,7 +22,7 @@ impl ProductSession {
             contexts,
             connections: BTreeMap::new(),
             script_ids: BTreeMap::new(),
-            source: None,
+            sources: BTreeMap::new(),
         }
     }
 
@@ -55,7 +55,7 @@ impl ProductSession {
         self.connections
             .retain(|target_id, _| matching.iter().any(|target| &target.id == target_id));
         self.script_ids
-            .retain(|target_id, _| self.connections.contains_key(target_id));
+            .retain(|(_, target_id), _| self.connections.contains_key(target_id));
         for target in matching {
             if !self.connections.contains_key(&target.id) {
                 let connection = CdpConnection::connect(&target.web_socket_debugger_url)
@@ -90,8 +90,13 @@ impl ProductSession {
         }
     }
 
-    pub async fn install_source(&mut self, source: String) -> Result<(), String> {
-        self.source = Some(source);
+    pub async fn install_source(
+        &mut self,
+        module_id: String,
+        source: String,
+        reload_renderer: bool,
+    ) -> Result<(), String> {
+        self.sources.insert(module_id, (source, reload_renderer));
         self.inject_missing_targets().await
     }
 
@@ -101,23 +106,35 @@ impl ProductSession {
     }
 
     async fn inject_missing_targets(&mut self) -> Result<(), String> {
-        let Some(source) = self.source.clone() else {
-            return Ok(());
-        };
-        let pending: Vec<_> = self
-            .connections
-            .iter()
-            .filter(|(target_id, _)| !self.script_ids.contains_key(*target_id))
-            .map(|(target_id, connection)| (target_id.clone(), connection.clone()))
-            .collect();
+        let mut pending = Vec::new();
+        for (module_id, (source, reload_renderer)) in &self.sources {
+            for (target_id, connection) in &self.connections {
+                if !self
+                    .script_ids
+                    .contains_key(&(module_id.clone(), target_id.clone()))
+                {
+                    pending.push((
+                        module_id.clone(),
+                        target_id.clone(),
+                        source.clone(),
+                        *reload_renderer,
+                        connection.clone(),
+                    ));
+                }
+            }
+        }
 
-        for (target_id, connection) in pending {
+        for (module_id, target_id, source, reload_renderer, connection) in pending {
             connection
                 .send("Page.enable", json!({}))
                 .await
                 .map_err(|error| error.to_string())?;
             connection
                 .send("Runtime.enable", json!({}))
+                .await
+                .map_err(|error| error.to_string())?;
+            connection
+                .send("Page.setBypassCSP", json!({ "enabled": true }))
                 .await
                 .map_err(|error| error.to_string())?;
             let result = connection
@@ -132,6 +149,13 @@ impl ProductSession {
                 .and_then(serde_json::Value::as_str)
                 .ok_or("CDP 未返回注入脚本标识")?
                 .to_string();
+            if reload_renderer {
+                connection
+                    .send("Page.reload", json!({}))
+                    .await
+                    .map_err(|error| error.to_string())?;
+                wait_for_document(&connection).await?;
+            }
             let current = connection
                 .send(
                     "Runtime.evaluate",
@@ -140,18 +164,38 @@ impl ProductSession {
                 .await
                 .map_err(|error| error.to_string())?;
             if let Some(exception) = current.get("exceptionDetails") {
-                return Err(format!("主题注入失败：{exception}"));
+                return Err(format!("模块注入失败：{exception}"));
             }
-            self.script_ids.insert(target_id, identifier);
+            if current
+                .pointer("/result/value")
+                .and_then(serde_json::Value::as_bool)
+                != Some(true)
+            {
+                return Err(format!("模块注入后未在目标页面生效：{module_id}"));
+            }
+            self.script_ids.insert((module_id, target_id), identifier);
         }
         Ok(())
     }
 
-    pub async fn remove_source(&mut self, cleanup: serde_json::Value) -> Result<(), String> {
-        let installed = std::mem::take(&mut self.script_ids);
-        self.source = None;
-        for (target_id, identifier) in installed {
-            let Some(connection) = self.connections.get(&target_id) else {
+    pub async fn remove_source(
+        &mut self,
+        module_id: &str,
+        cleanup: serde_json::Value,
+    ) -> Result<(), String> {
+        self.sources.remove(module_id);
+        let installed: Vec<_> = self
+            .script_ids
+            .iter()
+            .filter(|((installed_module, _), _)| installed_module == module_id)
+            .map(|((module_id, target_id), identifier)| {
+                ((module_id.clone(), target_id.clone()), identifier.clone())
+            })
+            .collect();
+        for (key, identifier) in installed {
+            let target_id = &key.1;
+            self.script_ids.remove(&key);
+            let Some(connection) = self.connections.get(target_id) else {
                 continue;
             };
             connection
@@ -168,4 +212,31 @@ impl ProductSession {
         }
         Ok(())
     }
+}
+
+async fn wait_for_document(connection: &CdpConnection) -> Result<(), String> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+    while tokio::time::Instant::now() < deadline {
+        if connection
+            .send(
+                "Runtime.evaluate",
+                json!({
+                    "expression": "document.readyState !== 'loading'",
+                    "returnByValue": true
+                }),
+            )
+            .await
+            .ok()
+            .and_then(|result| {
+                result
+                    .pointer("/result/value")
+                    .and_then(serde_json::Value::as_bool)
+            })
+            == Some(true)
+        {
+            return Ok(());
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    Err("等待 Codex Renderer 刷新超时".into())
 }

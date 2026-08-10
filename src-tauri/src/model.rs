@@ -32,6 +32,16 @@ pub struct ModuleSummary {
     pub name: String,
     pub version: String,
     pub enabled_for: Vec<String>,
+    pub has_service: bool,
+    pub browser_accessible: bool,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModuleServiceView {
+    pub module_id: String,
+    pub host: String,
+    pub port: u16,
 }
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -39,6 +49,8 @@ pub struct ModuleSummary {
 pub struct ProductStatus {
     pub product_id: String,
     pub phase: String,
+    pub launch_mode: Option<LaunchMode>,
+    pub cdp_status: String,
     pub module_errors: std::collections::BTreeMap<String, String>,
 }
 
@@ -47,6 +59,7 @@ pub struct ProductStatus {
 pub struct ProductView {
     pub profile: ProductProfile,
     pub modules: Vec<ModuleSummary>,
+    pub services: Vec<ModuleServiceView>,
     pub status: ProductStatus,
 }
 

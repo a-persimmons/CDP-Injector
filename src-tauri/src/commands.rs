@@ -5,10 +5,150 @@ use crate::{
     session::ProductSession,
     state::AppState,
 };
+use tauri::Manager;
 
 #[tauri::command]
-pub async fn list_products(state: tauri::State<'_, AppState>) -> Result<Vec<ProductView>, String> {
+pub async fn list_products(
+    state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
+) -> Result<Vec<ProductView>, String> {
+    for view in state.product_views().await {
+        let profile = view.profile;
+        let product_id = profile.id.clone();
+        if state.session(&product_id).await.is_none() {
+            let cdp_profile = profile.clone();
+            let cdp_port = tauri::async_runtime::spawn_blocking(move || {
+                product::discover_cdp_port(&cdp_profile)
+            })
+            .await
+            .map_err(|error| error.to_string())??;
+            if let Some(port) = cdp_port {
+                state
+                    .set_product_launch_mode(&product_id, crate::model::LaunchMode::Injected)
+                    .await?;
+                state
+                    .set_product_cdp_status(&product_id, "connecting")
+                    .await?;
+                let enabled_modules = view
+                    .modules
+                    .into_iter()
+                    .filter(|module| module.enabled_for.contains(&product_id))
+                    .map(|module| module.id)
+                    .collect();
+                if recover_existing_session(
+                    &state,
+                    app.clone(),
+                    product_id.clone(),
+                    port,
+                    profile.contexts.clone(),
+                    enabled_modules,
+                )
+                .await
+                .is_err()
+                {
+                    state
+                        .set_product_cdp_status(&product_id, "disconnected")
+                        .await?;
+                }
+            }
+        }
+
+        let running =
+            tauri::async_runtime::spawn_blocking(move || product::is_product_running(&profile))
+                .await
+                .map_err(|error| error.to_string())??;
+        state
+            .reconcile_product_running(&product_id, running)
+            .await?;
+    }
     Ok(state.product_views().await)
+}
+
+async fn recover_existing_session(
+    state: &AppState,
+    app: tauri::AppHandle,
+    product_id: String,
+    port: u16,
+    contexts: Vec<crate::model::TargetContext>,
+    enabled_modules: Vec<String>,
+) -> Result<(), String> {
+    let mut session = ProductSession::new(port, contexts);
+    if session.refresh_targets().await? == 0 {
+        return Err("未找到 Codex CDP 目标".into());
+    }
+    session.probe().await?;
+    install_modules(state, &app, &product_id, &mut session, &enabled_modules).await?;
+
+    let session = state.replace_session(product_id.clone(), session).await;
+    state
+        .set_product_cdp_status(&product_id, "connected")
+        .await?;
+    state
+        .set_product_phase(
+            &product_id,
+            if enabled_modules.is_empty() {
+                "running normally"
+            } else {
+                "injected"
+            },
+        )
+        .await?;
+    spawn_session_monitor(app, product_id, session);
+    Ok(())
+}
+
+async fn install_modules(
+    state: &AppState,
+    app: &tauri::AppHandle,
+    product_id: &str,
+    session: &mut ProductSession,
+    module_ids: &[String],
+) -> Result<(), String> {
+    for module_id in module_ids {
+        let service_url = match state.ensure_module_service(app, module_id).await {
+            Ok(url) => url,
+            Err(error) => {
+                state
+                    .set_module_error(product_id, module_id, Some(error.clone()))
+                    .await?;
+                return Err(error);
+            }
+        };
+        if let Err(error) =
+            injection::install_module(session, module_id, service_url.as_deref()).await
+        {
+            state.stop_module_service(module_id).await;
+            state
+                .set_module_error(product_id, module_id, Some(error.clone()))
+                .await?;
+            return Err(error);
+        }
+        state.set_module_error(product_id, module_id, None).await?;
+    }
+    Ok(())
+}
+
+fn spawn_session_monitor(
+    app: tauri::AppHandle,
+    product_id: String,
+    session: std::sync::Arc<tokio::sync::Mutex<ProductSession>>,
+) {
+    let session = std::sync::Arc::downgrade(&session);
+    tauri::async_runtime::spawn(async move {
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+            let Some(session) = session.upgrade() else {
+                break;
+            };
+            if session.lock().await.refresh_and_inject().await.is_err() {
+                let state = app.state::<AppState>();
+                let _ = state
+                    .set_product_cdp_status(&product_id, "disconnected")
+                    .await;
+                break;
+            }
+        }
+    });
 }
 
 #[tauri::command]
@@ -17,39 +157,48 @@ pub async fn set_module_enabled(
     module_id: String,
     enabled: bool,
     state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
 ) -> Result<(), String> {
-    state
+    let enabled_modules = state
         .set_module_enabled(&product_id, &module_id, enabled)
         .await?;
 
-    if module_id == "dev.cdp-injector.codex-theme" {
-        if let Some(session) = state.session(&product_id).await {
+    if let Some(session) = state.session(&product_id).await {
+        state.set_product_phase(&product_id, "injecting").await?;
+        let mut session = session.lock().await;
+        let result = if enabled {
+            install_modules(
+                &state,
+                &app,
+                &product_id,
+                &mut session,
+                std::slice::from_ref(&module_id),
+            )
+            .await
+        } else {
+            let result = injection::remove_module(&mut session, &module_id).await;
+            state.stop_module_service(&module_id).await;
             state
-                .set_product_phase(
-                    &product_id,
-                    if enabled {
-                        "injecting"
-                    } else {
-                        "running normally"
-                    },
-                )
+                .set_module_error(&product_id, &module_id, None)
                 .await?;
-            let mut session = session.lock().await;
-            let result = if enabled {
-                injection::install_theme(&mut session).await
-            } else {
-                injection::remove_theme(&mut session).await
-            };
-            if let Err(error) = result {
-                state
-                    .set_product_phase(&product_id, "partially failed")
-                    .await?;
-                return Err(error);
-            }
-            if enabled {
-                state.set_product_phase(&product_id, "injected").await?;
-            }
+            result
+        };
+        if let Err(error) = result {
+            state
+                .set_product_phase(&product_id, "partially failed")
+                .await?;
+            return Err(error);
         }
+        state
+            .set_product_phase(
+                &product_id,
+                if enabled_modules.is_empty() {
+                    "running normally"
+                } else {
+                    "injected"
+                },
+            )
+            .await?;
     }
     Ok(())
 }
@@ -59,9 +208,30 @@ pub async fn prepare_launch(
     product_id: String,
     state: tauri::State<'_, AppState>,
 ) -> Result<LaunchPreparation, String> {
-    let (profile, has_enabled_modules) = state.launch_data(&product_id).await?;
+    let (profile, enabled_modules) = state.launch_data(&product_id).await?;
     tauri::async_runtime::spawn_blocking(move || {
-        product::prepare_launch(&profile, has_enabled_modules)
+        product::prepare_launch(&profile, !enabled_modules.is_empty())
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn open_module_service(
+    module_id: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let url = state.browser_service_url(&module_id).await?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let status = std::process::Command::new("/usr/bin/open")
+            .arg(url)
+            .status()
+            .map_err(|error| error.to_string())?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err("无法在浏览器中打开模块服务".into())
+        }
     })
     .await
     .map_err(|error| error.to_string())?
@@ -71,8 +241,11 @@ pub async fn prepare_launch(
 pub async fn launch_product(
     product_id: String,
     state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
 ) -> Result<(), String> {
-    let (profile, has_enabled_modules) = state.launch_data(&product_id).await?;
+    let (profile, enabled_modules) = state.launch_data(&product_id).await?;
+    let previous_launch_mode = state.product_launch_mode(&product_id).await;
+    let has_enabled_modules = !enabled_modules.is_empty();
     let preparation = tauri::async_runtime::spawn_blocking({
         let profile = profile.clone();
         move || product::prepare_launch(&profile, has_enabled_modules)
@@ -101,10 +274,19 @@ pub async fn launch_product(
     match result {
         Ok(Some(port)) => {
             state
+                .set_product_launch_mode(&product_id, crate::model::LaunchMode::Injected)
+                .await?;
+            state
+                .set_product_cdp_status(&product_id, "connecting")
+                .await?;
+            state
                 .set_product_phase(&product_id, "connecting to CDP")
                 .await?;
             let mut session = ProductSession::new(port, contexts);
             if let Err(error) = session.wait_for_target().await {
+                state
+                    .set_product_cdp_status(&product_id, "disconnected")
+                    .await?;
                 state
                     .set_product_phase(&product_id, "launch failed")
                     .await?;
@@ -112,13 +294,21 @@ pub async fn launch_product(
             }
             if let Err(error) = session.probe().await {
                 state
+                    .set_product_cdp_status(&product_id, "disconnected")
+                    .await?;
+                state
                     .set_product_phase(&product_id, "launch failed")
                     .await?;
                 return Err(error);
             }
+            state
+                .set_product_cdp_status(&product_id, "connected")
+                .await?;
             if has_enabled_modules {
                 state.set_product_phase(&product_id, "injecting").await?;
-                if let Err(error) = injection::install_theme(&mut session).await {
+                if let Err(error) =
+                    install_modules(&state, &app, &product_id, &mut session, &enabled_modules).await
+                {
                     state
                         .set_product_phase(&product_id, "partially failed")
                         .await?;
@@ -129,21 +319,18 @@ pub async fn launch_product(
             if has_enabled_modules {
                 state.set_product_phase(&product_id, "injected").await?;
             }
-            let session = std::sync::Arc::downgrade(&session);
-            tauri::async_runtime::spawn(async move {
-                loop {
-                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-                    let Some(session) = session.upgrade() else {
-                        break;
-                    };
-                    if session.lock().await.refresh_and_inject().await.is_err() {
-                        break;
-                    }
-                }
-            });
+            spawn_session_monitor(app, product_id, session);
             Ok(())
         }
         Ok(None) => {
+            if previous_launch_mode != Some(crate::model::LaunchMode::Injected) {
+                state
+                    .set_product_launch_mode(&product_id, crate::model::LaunchMode::Normal)
+                    .await?;
+                state
+                    .set_product_cdp_status(&product_id, "not used")
+                    .await?;
+            }
             state
                 .set_product_phase(&product_id, "running normally")
                 .await

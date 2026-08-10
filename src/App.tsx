@@ -1,6 +1,8 @@
 import { useEffect, useState, type ComponentType } from "react";
 import {
   AppWindow,
+  ArrowSquareOut,
+  Browser,
   CaretDown,
   CaretRight,
   Clock,
@@ -14,18 +16,224 @@ import {
   PuzzlePiece,
   TerminalWindow,
   Warning,
+  X,
 } from "@phosphor-icons/react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
   launchProduct,
   listProducts,
+  openModuleService,
   prepareLaunch,
   setModuleEnabled,
   type ProductView,
 } from "./api";
 import "./styles.css";
 
-type View = "modules" | "diagnostics";
+type View = "modules" | "diagnostics" | "settings";
+type Language = "zh" | "en";
+type Theme = "auto" | "light" | "dark";
 type Icon = ComponentType<{ size?: number; weight?: "regular" | "bold" }>;
+
+const translations = {
+  zh: {
+    appName: "CDP注入器",
+    loading: "正在加载产品…",
+    mainNavigation: "主导航",
+    modules: "模块",
+    diagnostics: "诊断",
+    settings: "设置",
+    moduleManagement: "模块管理",
+    moduleSubtitle: "启动前选择要注入 Codex 的模块",
+    importModule: "导入 .cdpmod",
+    installedModules: "已安装模块",
+    name: "名称",
+    description: "描述",
+    status: "状态",
+    failed: "失败",
+    running: "运行中",
+    ready: "已就绪",
+    disabled: "未启用",
+    enable: "启用",
+    disable: "停用",
+    viewDetails: "查看{name}详情",
+    moduleDetails: "模块详情",
+    close: "关闭",
+    version: "版本",
+    moduleId: "模块 ID",
+    targetApplication: "目标应用",
+    serviceStatus: "后台服务",
+    noService: "无后台服务",
+    browserAccess: "浏览器访问",
+    supported: "支持",
+    unsupported: "不支持",
+    runtimeStatus: "运行状态",
+    serviceStartsLater: "服务将在启动后运行",
+    openInBrowser: "在浏览器中打开",
+    restartTitle: "重新启动 Codex？",
+    restartMessage: "将退出并重新启动 Codex",
+    cancel: "取消",
+    quitAndRestart: "退出并重新启动",
+    diagnosticsSubtitle: "查看 Product Session 与模块错误",
+    installedModuleCount: "已安装模块",
+    moduleErrors: "模块错误",
+    service: "服务",
+    waitingToStart: "等待启动",
+    settingsSubtitle: "调整界面语言与外观",
+    language: "语言",
+    languageHint: "选择 CDP注入器 的界面语言",
+    chinese: "中文",
+    english: "English",
+    theme: "主题",
+    themeHint: "自动跟随 macOS 外观设置",
+    automatic: "自动",
+    light: "亮色",
+    dark: "暗色",
+    normalLaunch: "将以普通方式启动 Codex",
+    cdpLaunch: (count: number) => `将通过 CDP 启动并注入 ${count} 个模块`,
+    processing: "正在处理 Codex Product Session",
+    runningWithCdp: "Codex 当前通过 CDP 运行",
+    restartWithCdp: "将退出并通过 CDP 重新启动 Codex",
+    runningNormally: "Codex 当前正常运行",
+    retryLaunch: "重试启动 Codex",
+    launchWithCdp: "以 CDP 启动 Codex",
+    launch: "启动 Codex",
+    restart: "重新启动 Codex",
+    restartViaCdp: "以 CDP 重启 Codex",
+    open: "打开 Codex",
+    runtime: {
+      "not running": "Codex 未运行",
+      stopping: "Codex 正在停止",
+      starting: "Codex 正在启动",
+      "launch failed": "Codex 启动失败",
+      default: "Codex 正常运行",
+    },
+    phase: {
+      "not running": "未运行",
+      "running normally": "正常运行",
+      stopping: "正在停止",
+      starting: "正在启动",
+      "connecting to CDP": "正在连接 CDP",
+      injecting: "正在注入",
+      injected: "已注入",
+      "partially failed": "部分失败",
+      "launch failed": "启动失败",
+    },
+    cdp: {
+      "not used": "CDP 未启用",
+      connecting: "CDP 连接中",
+      connected: "CDP 已连接",
+      disconnected: "CDP 未连接",
+    },
+    targetConnected: "目标已连接",
+    targetWaiting: "目标等待中",
+    targetDisabled: "目标未启用",
+    targetDisconnected: "目标未连接",
+    modulesInjected: "模块已注入",
+    modulesInjecting: "模块正在注入",
+    modulesNotInjected: "模块未注入",
+    count: (count: number) => `${count} 个`,
+  },
+  en: {
+    appName: "CDP Injector",
+    loading: "Loading products…",
+    mainNavigation: "Main navigation",
+    modules: "Modules",
+    diagnostics: "Diagnostics",
+    settings: "Settings",
+    moduleManagement: "Module management",
+    moduleSubtitle: "Choose modules to inject into Codex before launch",
+    importModule: "Import .cdpmod",
+    installedModules: "Installed modules",
+    name: "Name",
+    description: "Description",
+    status: "Status",
+    failed: "Failed",
+    running: "Running",
+    ready: "Ready",
+    disabled: "Disabled",
+    enable: "Enable ",
+    disable: "Disable ",
+    viewDetails: "View {name} details",
+    moduleDetails: "Module details",
+    close: "Close",
+    version: "Version",
+    moduleId: "Module ID",
+    targetApplication: "Target application",
+    serviceStatus: "Background service",
+    noService: "No background service",
+    browserAccess: "Browser access",
+    supported: "Supported",
+    unsupported: "Not supported",
+    runtimeStatus: "Runtime status",
+    serviceStartsLater: "Service starts with the module",
+    openInBrowser: "Open in browser",
+    restartTitle: "Restart Codex?",
+    restartMessage: "Codex will quit and restart",
+    cancel: "Cancel",
+    quitAndRestart: "Quit and restart",
+    diagnosticsSubtitle: "View Product Session and module errors",
+    installedModuleCount: "Installed modules",
+    moduleErrors: "Module errors",
+    service: " service",
+    waitingToStart: "Waiting to start",
+    settingsSubtitle: "Adjust the interface language and appearance",
+    language: "Language",
+    languageHint: "Choose the language used by CDP Injector",
+    chinese: "中文",
+    english: "English",
+    theme: "Theme",
+    themeHint: "Automatic follows the macOS appearance",
+    automatic: "Automatic",
+    light: "Light",
+    dark: "Dark",
+    normalLaunch: "Codex will launch normally",
+    cdpLaunch: (count: number) => `Codex will launch through CDP and inject ${count} module${count === 1 ? "" : "s"}`,
+    processing: "Processing the Codex Product Session",
+    runningWithCdp: "Codex is running through CDP",
+    restartWithCdp: "Codex will quit and restart through CDP",
+    runningNormally: "Codex is running normally",
+    retryLaunch: "Retry Codex",
+    launchWithCdp: "Launch Codex with CDP",
+    launch: "Launch Codex",
+    restart: "Restart Codex",
+    restartViaCdp: "Restart Codex with CDP",
+    open: "Open Codex",
+    runtime: {
+      "not running": "Codex not running",
+      stopping: "Stopping Codex",
+      starting: "Starting Codex",
+      "launch failed": "Codex launch failed",
+      default: "Codex running normally",
+    },
+    phase: {
+      "not running": "Not running",
+      "running normally": "Running normally",
+      stopping: "Stopping",
+      starting: "Starting",
+      "connecting to CDP": "Connecting to CDP",
+      injecting: "Injecting",
+      injected: "Injected",
+      "partially failed": "Partially failed",
+      "launch failed": "Launch failed",
+    },
+    cdp: {
+      "not used": "CDP disabled",
+      connecting: "CDP connecting",
+      connected: "CDP connected",
+      disconnected: "CDP disconnected",
+    },
+    targetConnected: "Target connected",
+    targetWaiting: "Target waiting",
+    targetDisabled: "Target disabled",
+    targetDisconnected: "Target disconnected",
+    modulesInjected: "Modules injected",
+    modulesInjecting: "Injecting modules",
+    modulesNotInjected: "Modules not injected",
+    count: (count: number) => `${count}`,
+  },
+};
+
+type Translation = (typeof translations)[Language];
 
 const previewProduct: ProductView = {
   profile: {
@@ -42,31 +250,93 @@ const previewProduct: ProductView = {
       name: "Codex 主题",
       version: "0.1.0",
       enabledFor: ["codex"],
+      hasService: false,
+      browserAccessible: false,
+    },
+    {
+      id: "dev.cdp-injector.codex-orange-glow",
+      name: "Codex 橙色光框",
+      version: "0.1.0",
+      enabledFor: ["codex"],
+      hasService: false,
+      browserAccessible: false,
+    },
+    {
+      id: "dev.dashi.taskboard",
+      name: "任务看板",
+      version: "0.1.0",
+      enabledFor: [],
+      hasService: true,
+      browserAccessible: true,
     },
   ],
-  status: { productId: "codex", phase: "not running", moduleErrors: {} },
-};
-
-const phaseLabels: Record<string, string> = {
-  "not running": "未运行",
-  "running normally": "正常运行",
-  stopping: "正在停止",
-  starting: "正在启动",
-  "connecting to CDP": "正在连接 CDP",
-  injecting: "正在注入",
-  injected: "已注入",
-  "partially failed": "部分失败",
-  "launch failed": "启动失败",
+  services: [
+    {
+      moduleId: "dev.dashi.taskboard",
+      host: "127.0.0.1",
+      port: 47823,
+    },
+  ],
+  status: {
+    productId: "codex",
+    phase: "not running",
+    launchMode: "injected",
+    cdpStatus: "connected",
+    moduleErrors: {},
+  },
 };
 
 export function App() {
   const [products, setProducts] = useState<ProductView[]>([]);
   const [view, setView] = useState<View>("modules");
+  const [language, setLanguage] = useState<Language>(() =>
+    localStorage.getItem("cdp-injector-language") === "en" ? "en" : "zh",
+  );
+  const [theme, setTheme] = useState<Theme>(() => {
+    const stored = localStorage.getItem("cdp-injector-theme");
+    return stored === "light" || stored === "dark" ? stored : "auto";
+  });
   const [error, setError] = useState("");
   const [saving, setSaving] = useState("");
   const [launching, setLaunching] = useState(false);
   const [restartPending, setRestartPending] = useState(false);
+  const [detailModuleId, setDetailModuleId] = useState<string | null>(null);
   const preview = import.meta.env.DEV && location.search === "?preview=1";
+  const text = translations[language];
+
+  useEffect(() => {
+    const title = text.appName;
+    localStorage.setItem("cdp-injector-language", language);
+    document.documentElement.lang = language === "zh" ? "zh-CN" : "en";
+    document.title = title;
+    if (!preview) void getCurrentWindow().setTitle(title).catch(() => {});
+  }, [language, preview, text.appName]);
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const applyTheme = () => {
+      document.documentElement.dataset.theme =
+        theme === "auto" ? (media.matches ? "dark" : "light") : theme;
+    };
+    applyTheme();
+    localStorage.setItem("cdp-injector-theme", theme);
+    media.addEventListener("change", applyTheme);
+    if (!preview) {
+      void getCurrentWindow()
+        .setTheme(theme === "auto" ? null : theme)
+        .catch(() => {});
+    }
+    return () => media.removeEventListener("change", applyTheme);
+  }, [preview, theme]);
+
+  useEffect(() => {
+    if (!detailModuleId) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setDetailModuleId(null);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [detailModuleId]);
 
   async function reload() {
     try {
@@ -79,6 +349,11 @@ export function App() {
 
   useEffect(() => {
     void reload();
+    if (preview) return;
+    const timer = window.setInterval(() => {
+      void listProducts().then(setProducts).catch(() => {});
+    }, 1500);
+    return () => window.clearInterval(timer);
   }, []);
 
   async function toggleModule(
@@ -147,25 +422,81 @@ export function App() {
     }
   }
 
+  async function openService(moduleId: string) {
+    try {
+      await openModuleService(moduleId);
+      setError("");
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }
+
   const product = products[0];
 
   if (!product) {
-    return <div className="loading">{error || "正在加载产品…"}</div>;
+    return <div className="loading">{error || text.loading}</div>;
   }
 
-  const phase = phaseLabels[product.status.phase] ?? product.status.phase;
   const moduleErrors = Object.entries(product.status.moduleErrors);
-  const cdpConnected = ["injecting", "injected", "partially failed"].includes(
-    product.status.phase,
+  const enabledModuleCount = product.modules.filter((module) =>
+    module.enabledFor.includes(product.profile.id),
+  ).length;
+  const enabledServiceModules = product.modules.filter(
+    (module) =>
+      module.hasService && module.enabledFor.includes(product.profile.id),
   );
-  const targetReady = cdpConnected;
+  const injectedModuleCount =
+    product.status.phase === "injected"
+      ? enabledModuleCount
+      : 0;
+  const launchBusy =
+    launching ||
+    ["stopping", "starting", "connecting to CDP", "injecting"].includes(
+      product.status.phase,
+    );
+  const launchLabel = launchBusy
+    ? (text.phase[product.status.phase as keyof typeof text.phase] ?? text.phase.starting)
+    : ["launch failed", "partially failed"].includes(product.status.phase)
+      ? text.retryLaunch
+      : product.status.phase === "not running"
+        ? enabledModuleCount > 0
+          ? text.launchWithCdp
+          : text.launch
+        : enabledModuleCount > 0
+          ? product.status.launchMode === "injected"
+            ? text.restart
+            : text.restartViaCdp
+          : text.open;
+  const launchHint = launchBusy
+    ? text.processing
+    : product.status.phase === "not running"
+      ? enabledModuleCount > 0
+        ? text.cdpLaunch(enabledModuleCount)
+        : text.normalLaunch
+      : product.status.launchMode === "injected"
+        ? text.runningWithCdp
+        : enabledModuleCount > 0
+          ? text.restartWithCdp
+          : text.runningNormally;
+  const cdpConnected = product.status.cdpStatus === "connected";
+  const cdpLabel = text.cdp[product.status.cdpStatus];
+  const runtimeLabel =
+    text.runtime[product.status.phase as keyof typeof text.runtime] ??
+    text.runtime.default;
+  const targetLabel = cdpConnected
+    ? text.targetConnected
+    : product.status.cdpStatus === "connecting"
+      ? text.targetWaiting
+      : product.status.cdpStatus === "not used"
+        ? text.targetDisabled
+        : text.targetDisconnected;
 
   return (
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand">
           <AppWindow size={19} />
-          <span>CDP Injector</span>
+          <span>{text.appName}</span>
         </div>
 
         <div className="product-picker">
@@ -174,24 +505,29 @@ export function App() {
           <CaretDown size={15} />
         </div>
 
-        <nav aria-label="主导航">
+        <nav aria-label={text.mainNavigation}>
           <NavButton
             active={view === "modules"}
             icon={PuzzlePiece}
-            label="模块"
+            label={text.modules}
             onClick={() => setView("modules")}
           />
           <NavButton
             active={view === "diagnostics"}
             icon={Pulse}
-            label="诊断"
+            label={text.diagnostics}
             onClick={() => setView("diagnostics")}
           />
         </nav>
 
-        <button className="settings-button" type="button" disabled>
+        <button
+          className={view === "settings" ? "settings-button active" : "settings-button"}
+          type="button"
+          aria-current={view === "settings" ? "page" : undefined}
+          onClick={() => setView("settings")}
+        >
           <GearSix size={20} />
-          <span>设置</span>
+          <span>{text.settings}</span>
         </button>
       </aside>
 
@@ -200,24 +536,32 @@ export function App() {
           <>
             <div className="workspace-header">
               <div>
-                <h1>模块管理</h1>
-                <p>启动前选择要注入 Codex 的模块</p>
+                <h1>{text.moduleManagement}</h1>
+                <p>{text.moduleSubtitle}</p>
               </div>
               <button className="secondary-button" type="button" disabled>
                 <DownloadSimple size={17} />
-                导入 .cdpmod
+                {text.importModule}
               </button>
             </div>
 
-            <section className="module-table" aria-label="已安装模块">
+            <section className="module-table" aria-label={text.installedModules}>
               <div className="table-heading" aria-hidden="true">
-                <span>名称</span>
-                <span>描述</span>
-                <span>状态</span>
+                <span>{text.name}</span>
+                <span>{text.description}</span>
+                <span>{text.status}</span>
               </div>
               {product.modules.map((module) => {
                 const enabled = module.enabledFor.includes(product.profile.id);
                 const moduleError = product.status.moduleErrors[module.id];
+                const displayName = moduleName(module.id, language, module.name);
+                const moduleState = moduleError
+                  ? "error"
+                  : !enabled
+                    ? "disabled"
+                    : product.status.phase === "injected"
+                      ? "running"
+                      : "ready";
 
                 return (
                   <div className="module-row" key={module.id}>
@@ -226,25 +570,25 @@ export function App() {
                         <PuzzlePiece size={22} />
                       </span>
                       <span>
-                        <strong>{module.name}</strong>
+                        <strong>{displayName}</strong>
                         <small>v{module.version}</small>
                       </span>
                     </div>
-                    <p>{moduleDescription(module.id)}</p>
+                    <p>{moduleDescription(module.id, language)}</p>
                     <div className="module-controls">
-                      <span className={`module-state ${moduleError ? "error" : ""}`}>
+                      <span className={`module-state ${moduleState}`}>
                         <i />
                         {moduleError
-                          ? "失败"
+                          ? text.failed
                           : enabled && product.status.phase === "injected"
-                            ? "运行中"
+                            ? text.running
                             : enabled
-                              ? "已就绪"
-                              : "未启用"}
+                              ? text.ready
+                              : text.disabled}
                       </span>
                       <label className="switch">
                         <input
-                          aria-label={`${enabled ? "停用" : "启用"}${module.name}`}
+                          aria-label={`${enabled ? text.disable : text.enable}${displayName}`}
                           type="checkbox"
                           checked={enabled}
                           disabled={saving === module.id}
@@ -261,8 +605,8 @@ export function App() {
                       <button
                         className="disclosure"
                         type="button"
-                        aria-label={`查看${module.name}详情`}
-                        disabled
+                        aria-label={text.viewDetails.replace("{name}", displayName)}
+                        onClick={() => setDetailModuleId(module.id)}
                       >
                         <CaretRight size={17} />
                       </button>
@@ -275,44 +619,80 @@ export function App() {
 
             {error && <p className="error-message">{error}</p>}
           </>
+        ) : view === "diagnostics" ? (
+          <Diagnostics
+            product={product}
+            language={language}
+            text={text}
+            runtimeLabel={runtimeLabel.replace(/^Codex\s/, "")}
+            cdpLabel={cdpLabel.replace(/^CDP\s/, "")}
+          />
         ) : (
-          <Diagnostics product={product} phase={phase} />
+          <Settings
+            language={language}
+            theme={theme}
+            text={text}
+            onLanguageChange={setLanguage}
+            onThemeChange={setTheme}
+          />
         )}
       </main>
 
       <aside className="session-panel">
-        <h2>运行状态</h2>
+        <h2>{text.runtimeStatus}</h2>
         <div className="session-steps">
-          <StatusStep icon={AppWindow} label={`Codex ${phase}`} />
           <StatusStep
-            icon={Link}
-            label={cdpConnected ? "CDP 已连接" : "CDP 未连接"}
+            icon={AppWindow}
+            label={runtimeLabel}
+            badge={product.status.launchMode === "injected" ? "CDP" : undefined}
           />
-          <StatusStep
-            icon={Clock}
-            label={targetReady ? "目标已连接" : "目标等待中"}
-          />
+          <StatusStep icon={Link} label={cdpLabel} />
+          <StatusStep icon={Clock} label={targetLabel} />
           <StatusStep
             icon={PuzzlePiece}
+            badge={injectedModuleCount}
             label={
               product.status.phase === "injected"
-                ? "模块已注入"
+                ? text.modulesInjected
                 : product.status.phase === "injecting"
-                  ? "模块正在注入"
-                  : "模块未注入"
+                  ? text.modulesInjecting
+                  : text.modulesNotInjected
             }
           />
         </div>
 
-        {product.modules.some((module) => module.id.includes("taskboard")) && (
-          <div className="warning-panel">
-            <Warning size={19} weight="bold" />
-            <p>
-              <strong>任务面板</strong>
-              <span>服务将在启动后运行</span>
-            </p>
-          </div>
-        )}
+        {enabledServiceModules.map((module) => {
+          const service = product.services.find(
+            (candidate) => candidate.moduleId === module.id,
+          );
+          return (
+            <div
+              className={service ? "service-panel running" : "service-panel"}
+              key={module.id}
+            >
+              <Browser size={19} />
+              <p>
+                <strong>{moduleName(module.id, language, module.name)}</strong>
+                <span>
+                  {service
+                    ? `${service.host}:${service.port}`
+                    : text.serviceStartsLater}
+                </span>
+              </p>
+              {service && module.browserAccessible && (
+                <button
+                  className="service-open-button"
+                  type="button"
+                  aria-label={`${text.openInBrowser}: ${moduleName(module.id, language, module.name)}`}
+                  title={text.openInBrowser}
+                  onClick={() => void openService(module.id)}
+                >
+                  <ArrowSquareOut size={16} />
+                </button>
+              )}
+            </div>
+          );
+        })}
 
         {moduleErrors.length > 0 && (
           <div className="error-panel">
@@ -322,18 +702,29 @@ export function App() {
         )}
 
         <div className="launch-area">
-          <p>{product.profile.preview.restartMessage}</p>
+          <p>{launchHint}</p>
           <button
             className="primary-button"
             type="button"
-            disabled={preview || launching}
+            disabled={preview || launchBusy}
             onClick={() => void requestLaunch()}
           >
             <Play size={18} weight="bold" />
-            {launching ? "正在启动…" : "启动 Codex"}
+            {launchLabel}
           </button>
         </div>
       </aside>
+
+      {detailModuleId && (
+        <ModuleDetailsDialog
+          module={product.modules.find((module) => module.id === detailModuleId)}
+          product={product}
+          language={language}
+          text={text}
+          onClose={() => setDetailModuleId(null)}
+          onOpenService={openService}
+        />
+      )}
 
       {restartPending && (
         <div className="dialog-backdrop" role="presentation">
@@ -343,19 +734,151 @@ export function App() {
             aria-modal="true"
             aria-labelledby="restart-title"
           >
-            <h2 id="restart-title">重新启动 Codex？</h2>
-            <p>{product.profile.preview.restartMessage}</p>
+            <h2 id="restart-title">{text.restartTitle}</h2>
+            <p>{text.restartMessage}</p>
             <div className="dialog-actions">
               <button type="button" onClick={() => setRestartPending(false)}>
-                取消
+                {text.cancel}
               </button>
               <button type="button" onClick={() => void startProduct()}>
-                退出并重新启动
+                {text.quitAndRestart}
               </button>
             </div>
           </section>
         </div>
       )}
+    </div>
+  );
+}
+
+function ModuleDetailsDialog({
+  module,
+  product,
+  language,
+  text,
+  onClose,
+  onOpenService,
+}: {
+  module: ProductView["modules"][number] | undefined;
+  product: ProductView;
+  language: Language;
+  text: Translation;
+  onClose: () => void;
+  onOpenService: (moduleId: string) => Promise<void>;
+}) {
+  if (!module) return null;
+
+  const enabled = module.enabledFor.includes(product.profile.id);
+  const error = product.status.moduleErrors[module.id];
+  const service = product.services.find(
+    (candidate) => candidate.moduleId === module.id,
+  );
+  const state = error
+    ? "error"
+    : !enabled
+      ? "disabled"
+      : product.status.phase === "injected"
+        ? "running"
+        : "ready";
+  const stateLabel = error
+    ? text.failed
+    : state === "running"
+      ? text.running
+      : state === "ready"
+        ? text.ready
+        : text.disabled;
+  const displayName = moduleName(module.id, language, module.name);
+
+  return (
+    <div
+      className="dialog-backdrop"
+      role="presentation"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section
+        className="confirm-dialog module-detail-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="module-detail-title"
+        aria-describedby="module-detail-description"
+      >
+        <header className="module-detail-header">
+          <span className="module-icon">
+            <PuzzlePiece size={22} />
+          </span>
+          <span>
+            <small>{text.moduleDetails}</small>
+            <h2 id="module-detail-title">{displayName}</h2>
+          </span>
+          <button
+            className="dialog-close-button"
+            type="button"
+            aria-label={text.close}
+            autoFocus
+            onClick={onClose}
+          >
+            <X size={17} />
+          </button>
+        </header>
+
+        <p id="module-detail-description" className="module-detail-description">
+          {moduleDescription(module.id, language)}
+        </p>
+
+        <dl className="module-detail-list">
+          <div>
+            <dt>{text.status}</dt>
+            <dd className={`module-state ${state}`}>
+              <i />
+              {stateLabel}
+            </dd>
+          </div>
+          <div>
+            <dt>{text.version}</dt>
+            <dd>v{module.version}</dd>
+          </div>
+          <div>
+            <dt>{text.moduleId}</dt>
+            <dd className="monospace-value">{module.id}</dd>
+          </div>
+          <div>
+            <dt>{text.targetApplication}</dt>
+            <dd>{product.profile.name}</dd>
+          </div>
+          <div>
+            <dt>{text.serviceStatus}</dt>
+            <dd>
+              {service
+                ? `${service.host}:${service.port}`
+                : module.hasService && enabled
+                  ? text.waitingToStart
+                  : module.hasService
+                    ? text.disabled
+                    : text.noService}
+            </dd>
+          </div>
+          <div>
+            <dt>{text.browserAccess}</dt>
+            <dd>{module.browserAccessible ? text.supported : text.unsupported}</dd>
+          </div>
+        </dl>
+
+        {error && <p className="module-detail-error">{error}</p>}
+
+        <div className="dialog-actions">
+          {service && module.browserAccessible && (
+            <button type="button" onClick={() => void onOpenService(module.id)}>
+              <ArrowSquareOut size={16} />
+              {text.openInBrowser}
+            </button>
+          )}
+          <button type="button" onClick={onClose}>
+            {text.close}
+          </button>
+        </div>
+      </section>
     </div>
   );
 }
@@ -384,60 +907,187 @@ function NavButton({
   );
 }
 
-function StatusStep({ icon: IconComponent, label }: { icon: Icon; label: string }) {
+function StatusStep({
+  icon: IconComponent,
+  label,
+  badge,
+}: {
+  icon: Icon;
+  label: string;
+  badge?: number | string;
+}) {
   return (
     <div className="status-step">
       <span>
         <IconComponent size={21} />
+        {badge !== undefined && <small>{badge}</small>}
       </span>
       <p>{label}</p>
     </div>
   );
 }
 
-function Diagnostics({ product, phase }: { product: ProductView; phase: string }) {
+function Diagnostics({
+  product,
+  language,
+  text,
+  runtimeLabel,
+  cdpLabel,
+}: {
+  product: ProductView;
+  language: Language;
+  text: Translation;
+  runtimeLabel: string;
+  cdpLabel: string;
+}) {
   return (
     <section className="diagnostics-view">
       <div className="workspace-header">
         <div>
-          <h1>诊断</h1>
-          <p>查看 Product Session 与模块错误</p>
+          <h1>{text.diagnostics}</h1>
+          <p>{text.diagnosticsSubtitle}</p>
         </div>
       </div>
       <div className="diagnostic-list">
-        <DiagnosticRow icon={AppWindow} label="Codex" value={phase} />
-        <DiagnosticRow icon={Link} label="CDP" value="未连接" />
+        <DiagnosticRow
+          icon={AppWindow}
+          label="Codex"
+          value={runtimeLabel}
+          badge={product.status.launchMode === "injected" ? "CDP" : undefined}
+        />
+        <DiagnosticRow icon={Link} label="CDP" value={cdpLabel} />
         <DiagnosticRow
           icon={Package}
-          label="已安装模块"
-          value={`${product.modules.length} 个`}
+          label={text.installedModuleCount}
+          value={text.count(product.modules.length)}
         />
         <DiagnosticRow
           icon={TerminalWindow}
-          label="模块错误"
-          value={`${Object.keys(product.status.moduleErrors).length} 个`}
+          label={text.moduleErrors}
+          value={text.count(Object.keys(product.status.moduleErrors).length)}
         />
+        {product.modules
+          .filter((module) => module.hasService)
+          .map((module) => {
+            const service = product.services.find(
+              (candidate) => candidate.moduleId === module.id,
+            );
+            const enabled = module.enabledFor.includes(product.profile.id);
+            return (
+              <DiagnosticRow
+                icon={Browser}
+                key={module.id}
+                label={`${moduleName(module.id, language, module.name)}${text.service}`}
+                value={
+                  service
+                    ? `${service.host}:${service.port}`
+                    : enabled
+                      ? text.waitingToStart
+                      : text.disabled
+                }
+              />
+            );
+          })}
       </div>
     </section>
   );
 }
 
-function DiagnosticRow({ icon: IconComponent, label, value }: {
+function Settings({
+  language,
+  theme,
+  text,
+  onLanguageChange,
+  onThemeChange,
+}: {
+  language: Language;
+  theme: Theme;
+  text: Translation;
+  onLanguageChange: (language: Language) => void;
+  onThemeChange: (theme: Theme) => void;
+}) {
+  return (
+    <section className="settings-view">
+      <div className="workspace-header">
+        <div>
+          <h1>{text.settings}</h1>
+          <p>{text.settingsSubtitle}</p>
+        </div>
+      </div>
+      <div className="settings-list">
+        <label className="setting-row">
+          <span>
+            <strong>{text.language}</strong>
+            <small>{text.languageHint}</small>
+          </span>
+          <select
+            value={language}
+            onChange={(event) => onLanguageChange(event.currentTarget.value as Language)}
+          >
+            <option value="zh">{text.chinese}</option>
+            <option value="en">{text.english}</option>
+          </select>
+        </label>
+        <label className="setting-row">
+          <span>
+            <strong>{text.theme}</strong>
+            <small>{text.themeHint}</small>
+          </span>
+          <select
+            value={theme}
+            onChange={(event) => onThemeChange(event.currentTarget.value as Theme)}
+          >
+            <option value="auto">{text.automatic}</option>
+            <option value="light">{text.light}</option>
+            <option value="dark">{text.dark}</option>
+          </select>
+        </label>
+      </div>
+    </section>
+  );
+}
+
+function DiagnosticRow({ icon: IconComponent, label, value, badge }: {
   icon: Icon;
   label: string;
   value: string;
+  badge?: string;
 }) {
   return (
     <div className="diagnostic-row">
       <IconComponent size={20} />
       <span>{label}</span>
-      <strong>{value}</strong>
+      <span className="diagnostic-value">
+        <strong>{value}</strong>
+        {badge && <small>{badge}</small>}
+      </span>
     </div>
   );
 }
 
-function moduleDescription(moduleId: string) {
-  return moduleId === "dev.cdp-injector.codex-theme"
-    ? "为 Codex 提供主题与配色"
-    : "本地预编译 CDP 模块";
+function moduleName(moduleId: string, language: Language, fallback: string) {
+  const names: Record<string, [string, string]> = {
+    "dev.cdp-injector.codex-theme": ["Codex 主题", "Codex Theme"],
+    "dev.cdp-injector.codex-orange-glow": ["Codex 橙色光框", "Codex Orange Glow"],
+    "dev.dashi.taskboard": ["任务看板", "Taskboard"],
+  };
+  return names[moduleId]?.[language === "zh" ? 0 : 1] ?? fallback;
+}
+
+function moduleDescription(moduleId: string, language: Language) {
+  const english = language === "en";
+  if (moduleId === "dev.cdp-injector.codex-theme") {
+    return english ? "Provides themes and colors for Codex" : "为 Codex 提供主题与配色";
+  }
+  if (moduleId === "dev.cdp-injector.codex-orange-glow") {
+    return english
+      ? "Adds a glowing orange border to the Codex window"
+      : "为 Codex 窗口添加橙色发光边框";
+  }
+  if (moduleId === "dev.dashi.taskboard") {
+    return english
+      ? "Manages local tasks and workflows in Codex"
+      : "在 Codex 中管理本地任务与工作流";
+  }
+  return english ? "Local precompiled CDP module" : "本地预编译 CDP 模块";
 }
