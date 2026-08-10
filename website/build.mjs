@@ -375,6 +375,7 @@ await mkdir(join(outputDir, "assets"), { recursive: true });
 await cp(join(websiteDir, "site.css"), join(outputDir, "assets/site.css"));
 await cp(join(websiteDir, "site.js"), join(outputDir, "assets/site.js"));
 await cp(join(repoDir, "src-tauri/icons/128x128.png"), join(outputDir, "assets/icon.png"));
+await cp(join(repoDir, "src-tauri/icons/icon.ico"), join(outputDir, "favicon.ico"));
 await cp(join(repoDir, "docs/plans/assets/2026-08-06-cdp-injector-ui-implementation.png"), join(outputDir, "assets/app.png"));
 
 for (const [lang, page, title, description, content] of pages) {
