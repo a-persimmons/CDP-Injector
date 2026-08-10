@@ -33,3 +33,14 @@ git push origin v0.1.0
 ```
 
 macOS 当前使用 ad-hoc 签名。正式分发时可再为 GitHub Actions 配置 Apple Developer 与 Windows 代码签名凭据。
+
+## 官网与文档
+
+官网、使用文档和模块开发指南位于 `website/`，使用 Node 标准库生成静态页面，不需要额外安装文档框架：
+
+```bash
+pnpm site:build
+python3 -m http.server 4175 --directory website/dist
+```
+
+推送官网或版本号变更到 `main` 后，`.github/workflows/pages.yml` 会构建并发布 GitHub Pages。默认入口会根据浏览器语言进入中文或英文页面。

@@ -8,6 +8,7 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
+    "site:build": "node website/build.mjs",
     "prepare:node": "node scripts/prepare-node-runtime.mjs",
     "tauri": "tauri"
   },
