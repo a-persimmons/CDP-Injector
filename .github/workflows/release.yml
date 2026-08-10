@@ -30,7 +30,7 @@ jobs:
             target: x86_64-pc-windows-msvc
             node_platform: win32
             node_arch: x64
-            args: ""
+            args: --bundles nsis
           - runner: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             node_platform: linux
