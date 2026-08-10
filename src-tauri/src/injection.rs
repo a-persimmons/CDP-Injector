@@ -1,6 +1,8 @@
+use std::fs;
+
 use serde_json::json;
 
-use crate::session::ProductSession;
+use crate::{module_package::InstalledModule, session::ProductSession};
 
 pub const THEME_MODULE_ID: &str = "dev.cdp-injector.codex-theme";
 pub const ORANGE_GLOW_MODULE_ID: &str = "dev.cdp-injector.codex-orange-glow";
@@ -73,22 +75,55 @@ pub fn build_module_source(module_id: &str, service_url: Option<&str>) -> Result
     }
 }
 
-pub async fn install_module(
-    session: &mut ProductSession,
-    module_id: &str,
+pub fn build_installed_module_source(
+    module: &InstalledModule,
     service_url: Option<&str>,
-) -> Result<(), String> {
-    session
-        .install_source(
-            module_id.to_string(),
-            build_module_source(module_id, service_url)?,
-            reload_renderer_after_install(module_id),
-        )
-        .await
-}
+) -> Result<String, String> {
+    let manifest = &module.manifest;
+    let module_id = serde_json::to_string(&manifest.id).map_err(|error| error.to_string())?;
+    let version = serde_json::to_string(&manifest.version).map_err(|error| error.to_string())?;
+    let service_url = serde_json::to_string(&service_url).map_err(|error| error.to_string())?;
+    let mut style_sources = String::new();
+    for (index, relative) in manifest.inject.styles.iter().enumerate() {
+        let css =
+            fs::read_to_string(module.path.join(relative)).map_err(|error| error.to_string())?;
+        let css = serde_json::to_string(&css).map_err(|error| error.to_string())?;
+        style_sources.push_str(&format!(
+            r#"
+  {{
+    const style = document.createElement("style");
+    style.dataset.cdpHubOwner = {module_id};
+    style.dataset.cdpHubStyle = {index:?};
+    style.textContent = {css};
+    (document.head || document.documentElement).append(style);
+  }}"#
+        ));
+    }
+    let entry = manifest
+        .inject
+        .entry
+        .as_ref()
+        .map(|relative| fs::read_to_string(module.path.join(relative)))
+        .transpose()
+        .map_err(|error| error.to_string())?
+        .unwrap_or_default();
 
-fn reload_renderer_after_install(module_id: &str) -> bool {
-    module_id == TASKBOARD_MODULE_ID
+    Ok(format!(
+        r#"{RUNTIME}
+(async () => {{
+  const moduleId = {module_id};
+  await globalThis.cdpHub.deactivate(moduleId);
+  {style_sources}
+  {entry}
+  await globalThis.cdpHub.activate(moduleId, {{
+    module: {{ id: moduleId, version: {version} }},
+    product: {{ id: "codex" }},
+    target: {{ url: location.href, title: document.title }},
+    serviceUrl: {service_url}
+  }});
+  return true;
+}})();"#
+    ))
 }
 
 pub async fn remove_module(session: &mut ProductSession, module_id: &str) -> Result<(), String> {
@@ -102,7 +137,7 @@ pub async fn remove_module(session: &mut ProductSession, module_id: &str) -> Res
         TASKBOARD_MODULE_ID => format!(
             "globalThis.__codexTaskboardInjection__?.destroy?.(); delete globalThis.__CODEX_TASKBOARD_URL__; delete globalThis.__CODEX_TASKBOARD_MANAGED_ORIGIN__; delete globalThis.__CODEX_TASKBOARD_SOURCE_HASH__; globalThis.cdpHub?.deactivate({module_id:?});"
         ),
-        _ => return Err(format!("未知内置模块：{module_id}")),
+        _ => format!("globalThis.cdpHub?.deactivate({module_id:?});"),
     };
     session
         .remove_source(
@@ -117,8 +152,10 @@ pub async fn remove_module(session: &mut ProductSession, module_id: &str) -> Res
 
 #[cfg(test)]
 mod tests {
+    use crate::module_package::{InjectSpec, InstalledModule, ModuleManifest, ModuleTarget};
+
     use super::{
-        build_module_source, reload_renderer_after_install, ORANGE_GLOW_MODULE_ID,
+        build_installed_module_source, build_module_source, ORANGE_GLOW_MODULE_ID,
         TASKBOARD_MODULE_ID, THEME_MODULE_ID,
     };
 
@@ -145,7 +182,50 @@ mod tests {
         assert!(source.contains("http://127.0.0.1:43123/"));
         assert!(source.contains("__codexTaskboardInjection__"));
         assert!(source.contains("return Boolean"));
-        assert!(reload_renderer_after_install(TASKBOARD_MODULE_ID));
-        assert!(!reload_renderer_after_install(THEME_MODULE_ID));
+    }
+
+    #[test]
+    fn builds_installed_module_lifecycle_source() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(root.path().join("inject")).unwrap();
+        std::fs::write(
+            root.path().join("inject/index.js"),
+            "cdpHub.register({ id: 'dev.example.module', activate() {} });",
+        )
+        .unwrap();
+        std::fs::write(
+            root.path().join("inject/index.css"),
+            "body { color: orange; }",
+        )
+        .unwrap();
+        let module = InstalledModule {
+            path: root.path().into(),
+            manifest: ModuleManifest {
+                schema_version: 1,
+                id: "dev.example.module".into(),
+                name: "Example".into(),
+                version: "1.0.0".into(),
+                description: "Example module".into(),
+                icon: "icon.png".into(),
+                hub_api: 1,
+                targets: vec![ModuleTarget {
+                    product: "codex".into(),
+                    context: "main".into(),
+                }],
+                inject: InjectSpec {
+                    entry: Some("inject/index.js".into()),
+                    styles: vec!["inject/index.css".into()],
+                    run_at: "document-start".into(),
+                },
+                service: None,
+                capabilities: vec!["renderer-injection".into()],
+            },
+        };
+
+        let source = build_installed_module_source(&module, None).unwrap();
+        assert!(source.contains("dev.example.module"));
+        assert!(source.contains("body { color: orange; }"));
+        assert!(source.contains("cdpHub.activate"));
+        assert!(source.contains("serviceUrl: null"));
     }
 }

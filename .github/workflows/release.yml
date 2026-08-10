@@ -1,0 +1,91 @@
+name: Build and release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-latest
+            target: aarch64-apple-darwin
+            node_platform: darwin
+            node_arch: arm64
+            args: --target aarch64-apple-darwin
+          - runner: macos-15-intel
+            target: x86_64-apple-darwin
+            node_platform: darwin
+            node_arch: x64
+            args: --target x86_64-apple-darwin
+          - runner: windows-latest
+            target: x86_64-pc-windows-msvc
+            node_platform: win32
+            node_arch: x64
+            args: ""
+          - runner: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            node_platform: linux
+            node_arch: x64
+            args: ""
+
+    runs-on: ${{ matrix.runner }}
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.16.0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf xdg-utils
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: ./src-tauri -> target
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Prepare bundled Node runtime
+        run: node scripts/prepare-node-runtime.mjs
+        env:
+          CDP_NODE_PLATFORM: ${{ matrix.node_platform }}
+          CDP_NODE_ARCH: ${{ matrix.node_arch }}
+
+      - name: Build pull request or branch
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        run: pnpm tauri build -- ${{ matrix.args }}
+
+      - name: Build and publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: tauri-apps/tauri-action@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: CDP Injector ${{ github.ref_name }}
+          releaseBody: Download the package for your operating system and architecture.
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}

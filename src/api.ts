@@ -21,9 +21,21 @@ export type ModuleSummary = {
   id: string;
   name: string;
   version: string;
+  description: string;
+  capabilities: string[];
   enabledFor: string[];
   hasService: boolean;
   browserAccessible: boolean;
+};
+
+export type ModulePackagePreview = {
+  id: string;
+  name: string;
+  version: string;
+  description: string;
+  capabilities: string[];
+  targets: string[];
+  hasService: boolean;
 };
 
 export type ProductView = {
@@ -70,4 +82,12 @@ export function launchProduct(productId: string) {
 
 export function openModuleService(moduleId: string) {
   return invoke<void>("open_module_service", { moduleId });
+}
+
+export function inspectModulePackage(path: string) {
+  return invoke<ModulePackagePreview>("inspect_module_package", { path });
+}
+
+export function installModulePackage(path: string) {
+  return invoke<void>("install_module_package", { path });
 }

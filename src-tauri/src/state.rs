@@ -3,7 +3,10 @@ use std::{
     fs,
     io::ErrorKind,
     path::{Path, PathBuf},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 
 use tokio::sync::Mutex;
@@ -11,6 +14,7 @@ use tokio::sync::Mutex;
 use crate::{
     injection::{ORANGE_GLOW_MODULE_ID, TASKBOARD_MODULE_ID, THEME_MODULE_ID},
     model::{ModuleServiceView, ModuleSummary, ProductProfile, ProductStatus, ProductView},
+    module_package::{self, InstalledModule, ModulePackagePreview},
     module_service::ModuleService,
     session::ProductSession,
 };
@@ -31,8 +35,11 @@ pub struct AppStateData {
 pub struct AppState {
     pub data: Mutex<AppStateData>,
     pub sessions: Mutex<BTreeMap<String, Arc<Mutex<ProductSession>>>>,
+    installed_modules: Mutex<BTreeMap<String, InstalledModule>>,
     services: Mutex<BTreeMap<String, ModuleService>>,
     settings_path: PathBuf,
+    modules_dir: PathBuf,
+    quitting: AtomicBool,
 }
 
 impl AppStateData {
@@ -140,36 +147,60 @@ impl AppState {
             Err(error) => return Err(error.into()),
         };
         let product_id = profile.id.clone();
+        let modules_dir = config_dir.join("Modules");
+        let installed_modules = module_package::scan_installed(&modules_dir)?;
+        let mut modules = vec![
+            ModuleSummary {
+                id: THEME_MODULE_ID.into(),
+                name: "Codex 主题".into(),
+                version: "0.1.0".into(),
+                description: "为 Codex 提供主题与配色".into(),
+                capabilities: vec!["renderer-injection".into(), "csp-bypass".into()],
+                enabled_for: vec![],
+                has_service: false,
+                browser_accessible: false,
+            },
+            ModuleSummary {
+                id: ORANGE_GLOW_MODULE_ID.into(),
+                name: "Codex 橙色光框".into(),
+                version: "0.1.0".into(),
+                description: "为 Codex 窗口添加橙色发光边框".into(),
+                capabilities: vec!["renderer-injection".into(), "csp-bypass".into()],
+                enabled_for: vec![],
+                has_service: false,
+                browser_accessible: false,
+            },
+            ModuleSummary {
+                id: TASKBOARD_MODULE_ID.into(),
+                name: "任务看板".into(),
+                version: "0.1.0".into(),
+                description: "在 Codex 中管理本地任务与工作流".into(),
+                capabilities: vec![
+                    "renderer-injection".into(),
+                    "local-service".into(),
+                    "module-data".into(),
+                    "csp-bypass".into(),
+                ],
+                enabled_for: vec![],
+                has_service: true,
+                browser_accessible: true,
+            },
+        ];
+        modules.extend(installed_modules.values().map(|module| ModuleSummary {
+            id: module.manifest.id.clone(),
+            name: module.manifest.name.clone(),
+            version: module.manifest.version.clone(),
+            description: module.manifest.description.clone(),
+            capabilities: module.manifest.capabilities.clone(),
+            enabled_for: vec![],
+            has_service: module.manifest.service.is_some(),
+            browser_accessible: module.manifest.service.is_some(),
+        }));
 
         Ok(Self {
             data: Mutex::new(AppStateData {
                 profiles: vec![profile],
-                modules: vec![
-                    ModuleSummary {
-                        id: THEME_MODULE_ID.into(),
-                        name: "Codex 主题".into(),
-                        version: "0.1.0".into(),
-                        enabled_for: vec![],
-                        has_service: false,
-                        browser_accessible: false,
-                    },
-                    ModuleSummary {
-                        id: ORANGE_GLOW_MODULE_ID.into(),
-                        name: "Codex 橙色光框".into(),
-                        version: "0.1.0".into(),
-                        enabled_for: vec![],
-                        has_service: false,
-                        browser_accessible: false,
-                    },
-                    ModuleSummary {
-                        id: TASKBOARD_MODULE_ID.into(),
-                        name: "任务看板".into(),
-                        version: "0.1.0".into(),
-                        enabled_for: vec![],
-                        has_service: true,
-                        browser_accessible: true,
-                    },
-                ],
+                modules,
                 statuses: BTreeMap::from([(
                     product_id.clone(),
                     ProductStatus {
@@ -183,9 +214,74 @@ impl AppState {
                 settings,
             }),
             sessions: Mutex::new(BTreeMap::new()),
+            installed_modules: Mutex::new(installed_modules),
             services: Mutex::new(BTreeMap::new()),
             settings_path,
+            modules_dir,
+            quitting: AtomicBool::new(false),
         })
+    }
+
+    pub fn begin_quit(&self) -> bool {
+        !self.quitting.swap(true, Ordering::SeqCst)
+    }
+
+    pub fn is_quitting(&self) -> bool {
+        self.quitting.load(Ordering::SeqCst)
+    }
+
+    pub fn inspect_module_package(path: &Path) -> Result<ModulePackagePreview, String> {
+        module_package::inspect_package(path)
+    }
+
+    pub fn modules_dir(&self) -> PathBuf {
+        self.modules_dir.clone()
+    }
+
+    pub async fn register_installed_module(&self, module: InstalledModule) -> Result<(), String> {
+        if matches!(
+            module.manifest.id.as_str(),
+            THEME_MODULE_ID | ORANGE_GLOW_MODULE_ID | TASKBOARD_MODULE_ID
+        ) {
+            return Err("模块 ID 与内置模块冲突".into());
+        }
+        let summary = ModuleSummary {
+            id: module.manifest.id.clone(),
+            name: module.manifest.name.clone(),
+            version: module.manifest.version.clone(),
+            description: module.manifest.description.clone(),
+            capabilities: module.manifest.capabilities.clone(),
+            enabled_for: vec![],
+            has_service: module.manifest.service.is_some(),
+            browser_accessible: module.manifest.service.is_some(),
+        };
+        self.stop_module_service(&summary.id).await;
+        self.installed_modules
+            .lock()
+            .await
+            .insert(summary.id.clone(), module);
+        let mut data = self.data.lock().await;
+        if let Some(current) = data.modules.iter_mut().find(|item| item.id == summary.id) {
+            let enabled_for = current.enabled_for.clone();
+            *current = ModuleSummary {
+                enabled_for,
+                ..summary
+            };
+        } else {
+            data.modules.push(summary);
+        }
+        Ok(())
+    }
+
+    pub async fn module_source(
+        &self,
+        module_id: &str,
+        service_url: Option<&str>,
+    ) -> Result<String, String> {
+        if let Some(module) = self.installed_modules.lock().await.get(module_id).cloned() {
+            return crate::injection::build_installed_module_source(&module, service_url);
+        }
+        crate::injection::build_module_source(module_id, service_url)
     }
 
     pub fn persist_settings(&self, settings: &Settings) -> Result<(), String> {
@@ -335,14 +431,30 @@ impl AppState {
         app: &tauri::AppHandle,
         module_id: &str,
     ) -> Result<Option<String>, String> {
-        if module_id != TASKBOARD_MODULE_ID {
-            return Ok(None);
-        }
         if let Some(service) = self.services.lock().await.get(module_id) {
             return Ok(Some(service.url().into()));
         }
 
-        let service = ModuleService::start(app, module_id).await?;
+        let service = if module_id == TASKBOARD_MODULE_ID {
+            ModuleService::start_taskboard(app, module_id).await?
+        } else {
+            let installed = self.installed_modules.lock().await.get(module_id).cloned();
+            let Some(installed) = installed else {
+                return Ok(None);
+            };
+            let Some(spec) = &installed.manifest.service else {
+                return Ok(None);
+            };
+            ModuleService::start_installed(
+                app,
+                module_id,
+                &installed.path,
+                &spec.entry,
+                &spec.health_path,
+                spec.ready_timeout_ms,
+            )
+            .await?
+        };
         let url = service.url().to_string();
         self.services.lock().await.insert(module_id.into(), service);
         Ok(Some(url))
@@ -375,7 +487,7 @@ impl AppState {
             .ok_or_else(|| "模块服务尚未运行".into())
     }
 
-    async fn stop_all_services(&self) {
+    pub async fn stop_all_services(&self) {
         let services = std::mem::take(&mut *self.services.lock().await);
         for service in services.into_values() {
             service.stop().await;

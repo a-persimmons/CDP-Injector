@@ -829,6 +829,82 @@ nav {
   font-size: 13px;
 }
 
+.import-dialog {
+  position: relative;
+  width: min(460px, calc(100vw - 40px));
+}
+
+.import-dialog-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+}
+
+.import-module-heading {
+  display: flex;
+  gap: 11px;
+  margin-top: 18px;
+  align-items: center;
+}
+
+.import-module-heading div {
+  min-width: 0;
+}
+
+.import-module-heading strong,
+.import-module-heading small {
+  display: block;
+}
+
+.import-module-heading small {
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+
+.confirm-dialog .capability-warning {
+  margin-top: 14px;
+  padding: 10px 11px;
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
+  border-radius: 8px;
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 9%, transparent);
+  line-height: 1.45;
+}
+
+.import-metadata {
+  margin: 14px 0 0;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.import-metadata > div {
+  display: grid;
+  grid-template-columns: 88px minmax(0, 1fr);
+  gap: 12px;
+  padding: 9px 11px;
+  border-bottom: 1px solid var(--border);
+}
+
+.import-metadata > div:last-child {
+  border-bottom: 0;
+}
+
+.import-metadata dt {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.import-metadata dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-strong);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  text-align: right;
+}
+
 .module-detail-dialog .dialog-actions button {
   display: inline-flex;
   gap: 7px;

@@ -1,11 +1,13 @@
 use crate::{
     injection,
     model::{LaunchPreparation, ProductView},
+    module_package::{self, ModulePackagePreview},
     product,
     session::ProductSession,
     state::AppState,
 };
 use tauri::Manager;
+use tauri_plugin_opener::OpenerExt;
 
 #[tauri::command]
 pub async fn list_products(
@@ -114,8 +116,16 @@ async fn install_modules(
                 return Err(error);
             }
         };
-        if let Err(error) =
-            injection::install_module(session, module_id, service_url.as_deref()).await
+        let source = state
+            .module_source(module_id, service_url.as_deref())
+            .await?;
+        if let Err(error) = session
+            .install_source(
+                module_id.clone(),
+                source,
+                module_id == injection::TASKBOARD_MODULE_ID,
+            )
+            .await
         {
             state.stop_module_service(module_id).await;
             state
@@ -126,6 +136,43 @@ async fn install_modules(
         state.set_module_error(product_id, module_id, None).await?;
     }
     Ok(())
+}
+
+#[tauri::command]
+pub async fn inspect_module_package(path: String) -> Result<ModulePackagePreview, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        AppState::inspect_module_package(std::path::Path::new(&path))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
+#[tauri::command]
+pub async fn install_module_package(
+    path: String,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    let preview_path = path.clone();
+    let preview = tauri::async_runtime::spawn_blocking(move || {
+        AppState::inspect_module_package(std::path::Path::new(&preview_path))
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    if matches!(
+        preview.id.as_str(),
+        injection::THEME_MODULE_ID
+            | injection::ORANGE_GLOW_MODULE_ID
+            | injection::TASKBOARD_MODULE_ID
+    ) {
+        return Err("模块 ID 与内置模块冲突".into());
+    }
+    let modules_dir = state.modules_dir();
+    let module = tauri::async_runtime::spawn_blocking(move || {
+        module_package::install_package(std::path::Path::new(&path), &modules_dir)
+    })
+    .await
+    .map_err(|error| error.to_string())??;
+    state.register_installed_module(module).await
 }
 
 fn spawn_session_monitor(
@@ -220,21 +267,12 @@ pub async fn prepare_launch(
 pub async fn open_module_service(
     module_id: String,
     state: tauri::State<'_, AppState>,
+    app: tauri::AppHandle,
 ) -> Result<(), String> {
     let url = state.browser_service_url(&module_id).await?;
-    tauri::async_runtime::spawn_blocking(move || {
-        let status = std::process::Command::new("/usr/bin/open")
-            .arg(url)
-            .status()
-            .map_err(|error| error.to_string())?;
-        if status.success() {
-            Ok(())
-        } else {
-            Err("无法在浏览器中打开模块服务".into())
-        }
-    })
-    .await
-    .map_err(|error| error.to_string())?
+    app.opener()
+        .open_url(url, None::<&str>)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]

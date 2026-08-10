@@ -31,6 +31,8 @@ pub struct ModuleSummary {
     pub id: String,
     pub name: String,
     pub version: String,
+    pub description: String,
+    pub capabilities: Vec<String>,
     pub enabled_for: Vec<String>,
     pub has_service: bool,
     pub browser_accessible: bool,

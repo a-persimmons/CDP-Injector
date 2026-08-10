@@ -1,12 +1,35 @@
-# CDP Injector
+# CDP注入器 / CDP Injector
 
-CDP 注入器是一个 macOS 常驻启动器，通过共享的 Product Session 为 Codex 注入本地模块。
+CDP注入器是一个常驻桌面启动器，通过共享的 Product Session 为 Codex 注入本地 `.cdpmod` 模块。
 
-当前阶段只验证内置主题的直接操作路径。Taskboard、模块市场和跨平台支持尚未实现。
+当前运行时验收范围是 macOS + Codex。仓库可以在 macOS Intel/ARM、Windows x64 和 Linux x64 上构建安装包，但 Windows/Linux 的 Electron 应用发现、启动与进程探测仍属于后续兼容工作，当前构建不代表这些系统已经具备完整注入能力。
+
+已包含：
+
+- 内置 Codex 主题、橙色光框和任务看板；
+- 安全检查、能力确认和本地安装 `.cdpmod`；
+- 一个 Codex 实例共享一个 CDP 端口与 Product Session；
+- 带本地服务的模块由内置 Node 运行时启动，无需系统 Node 或 `npm install`；
+- 关闭主窗口后驻留托盘，退出时停止模块服务。
 
 ## 开发
 
 ```bash
 pnpm install
+pnpm prepare:node
 pnpm tauri dev
 ```
+
+Node 二进制位于 `src-tauri/resources/node/`，只在本地或 CI 构建时从 Node.js 官方发行包下载并校验 SHA-256，不提交到 Git。
+
+## 自动发布
+
+- 推送到 `main` 或创建 Pull Request：构建四个平台组合并验证可打包。
+- 推送形如 `v0.1.0` 的标签：自动创建 GitHub Release，并上传 macOS ARM、macOS Intel、Windows x64、Linux x64 安装包。
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+macOS 当前使用 ad-hoc 签名。正式分发时可再为 GitHub Actions 配置 Apple Developer 与 Windows 代码签名凭据。

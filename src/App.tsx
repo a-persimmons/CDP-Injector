@@ -19,12 +19,16 @@ import {
   X,
 } from "@phosphor-icons/react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
 import {
+  inspectModulePackage,
+  installModulePackage,
   launchProduct,
   listProducts,
   openModuleService,
   prepareLaunch,
   setModuleEnabled,
+  type ModulePackagePreview,
   type ProductView,
 } from "./api";
 import "./styles.css";
@@ -45,6 +49,12 @@ const translations = {
     moduleManagement: "模块管理",
     moduleSubtitle: "启动前选择要注入 Codex 的模块",
     importModule: "导入 .cdpmod",
+    importTitle: "确认安装模块",
+    capabilityWarning: "模块会在 Codex renderer 中运行，并拥有以下能力。安装过程不会执行代码或构建依赖。",
+    targets: "目标",
+    capabilities: "能力",
+    installModule: "安装模块",
+    installing: "正在安装…",
     installedModules: "已安装模块",
     name: "名称",
     description: "描述",
@@ -143,6 +153,12 @@ const translations = {
     moduleManagement: "Module management",
     moduleSubtitle: "Choose modules to inject into Codex before launch",
     importModule: "Import .cdpmod",
+    importTitle: "Confirm module installation",
+    capabilityWarning: "This module runs in the Codex renderer with the capabilities below. Installation does not execute code or build dependencies.",
+    targets: "Targets",
+    capabilities: "Capabilities",
+    installModule: "Install module",
+    installing: "Installing…",
     installedModules: "Installed modules",
     name: "Name",
     description: "Description",
@@ -252,6 +268,8 @@ const previewProduct: ProductView = {
       enabledFor: ["codex"],
       hasService: false,
       browserAccessible: false,
+      description: "为 Codex 提供主题与配色",
+      capabilities: ["renderer-injection", "csp-bypass"],
     },
     {
       id: "dev.cdp-injector.codex-orange-glow",
@@ -260,6 +278,8 @@ const previewProduct: ProductView = {
       enabledFor: ["codex"],
       hasService: false,
       browserAccessible: false,
+      description: "为 Codex 窗口添加橙色发光边框",
+      capabilities: ["renderer-injection", "csp-bypass"],
     },
     {
       id: "dev.dashi.taskboard",
@@ -268,6 +288,8 @@ const previewProduct: ProductView = {
       enabledFor: [],
       hasService: true,
       browserAccessible: true,
+      description: "在 Codex 中管理本地任务与工作流",
+      capabilities: ["renderer-injection", "local-service", "module-data", "csp-bypass"],
     },
   ],
   services: [
@@ -301,6 +323,11 @@ export function App() {
   const [launching, setLaunching] = useState(false);
   const [restartPending, setRestartPending] = useState(false);
   const [detailModuleId, setDetailModuleId] = useState<string | null>(null);
+  const [pendingImport, setPendingImport] = useState<{
+    path: string;
+    module: ModulePackagePreview;
+  } | null>(null);
+  const [installing, setInstalling] = useState(false);
   const preview = import.meta.env.DEV && location.search === "?preview=1";
   const text = translations[language];
 
@@ -431,6 +458,39 @@ export function App() {
     }
   }
 
+  async function chooseModulePackage() {
+    if (preview) return;
+    try {
+      const path = await openFileDialog({
+        multiple: false,
+        directory: false,
+        filters: [{ name: "CDP Module", extensions: ["cdpmod"] }],
+      });
+      if (typeof path !== "string") return;
+      const module = await inspectModulePackage(path);
+      setPendingImport({ path, module });
+      setError("");
+    } catch (reason) {
+      setError(String(reason));
+    }
+  }
+
+  async function confirmModuleInstall() {
+    if (!pendingImport) return;
+    setInstalling(true);
+    setError("");
+    try {
+      await installModulePackage(pendingImport.path);
+      setPendingImport(null);
+      await reload();
+      setError("");
+    } catch (reason) {
+      setError(String(reason));
+    } finally {
+      setInstalling(false);
+    }
+  }
+
   const product = products[0];
 
   if (!product) {
@@ -539,7 +599,12 @@ export function App() {
                 <h1>{text.moduleManagement}</h1>
                 <p>{text.moduleSubtitle}</p>
               </div>
-              <button className="secondary-button" type="button" disabled>
+              <button
+                className="secondary-button"
+                type="button"
+                disabled={preview}
+                onClick={() => void chooseModulePackage()}
+              >
                 <DownloadSimple size={17} />
                 {text.importModule}
               </button>
@@ -574,7 +639,7 @@ export function App() {
                         <small>v{module.version}</small>
                       </span>
                     </div>
-                    <p>{moduleDescription(module.id, language)}</p>
+                    <p>{moduleDescription(module.id, language, module.description)}</p>
                     <div className="module-controls">
                       <span className={`module-state ${moduleState}`}>
                         <i />
@@ -747,6 +812,49 @@ export function App() {
           </section>
         </div>
       )}
+
+      {pendingImport && (
+        <div className="dialog-backdrop" role="presentation">
+          <section
+            className="confirm-dialog import-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="import-title"
+          >
+            <button
+              className="dialog-close-button import-dialog-close"
+              type="button"
+              aria-label={text.close}
+              onClick={() => setPendingImport(null)}
+            >
+              <X size={18} />
+            </button>
+            <h2 id="import-title">{text.importTitle}</h2>
+            <div className="import-module-heading">
+              <span className="module-icon"><PuzzlePiece size={22} /></span>
+              <div>
+                <strong>{pendingImport.module.name}</strong>
+                <small>v{pendingImport.module.version} · {pendingImport.module.id}</small>
+              </div>
+            </div>
+            <p>{pendingImport.module.description}</p>
+            <p className="capability-warning">{text.capabilityWarning}</p>
+            <dl className="import-metadata">
+              <div><dt>{text.targets}</dt><dd>{pendingImport.module.targets.join(", ")}</dd></div>
+              <div><dt>{text.capabilities}</dt><dd>{pendingImport.module.capabilities.join(", ")}</dd></div>
+            </dl>
+            {error && <p className="module-detail-error">{error}</p>}
+            <div className="dialog-actions">
+              <button type="button" disabled={installing} onClick={() => setPendingImport(null)}>
+                {text.cancel}
+              </button>
+              <button type="button" disabled={installing} onClick={() => void confirmModuleInstall()}>
+                {installing ? text.installing : text.installModule}
+              </button>
+            </div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
@@ -824,7 +932,7 @@ function ModuleDetailsDialog({
         </header>
 
         <p id="module-detail-description" className="module-detail-description">
-          {moduleDescription(module.id, language)}
+          {moduleDescription(module.id, language, module.description)}
         </p>
 
         <dl className="module-detail-list">
@@ -1074,7 +1182,7 @@ function moduleName(moduleId: string, language: Language, fallback: string) {
   return names[moduleId]?.[language === "zh" ? 0 : 1] ?? fallback;
 }
 
-function moduleDescription(moduleId: string, language: Language) {
+function moduleDescription(moduleId: string, language: Language, fallback: string) {
   const english = language === "en";
   if (moduleId === "dev.cdp-injector.codex-theme") {
     return english ? "Provides themes and colors for Codex" : "为 Codex 提供主题与配色";
@@ -1089,5 +1197,5 @@ function moduleDescription(moduleId: string, language: Language) {
       ? "Manages local tasks and workflows in Codex"
       : "在 Codex 中管理本地任务与工作流";
   }
-  return english ? "Local precompiled CDP module" : "本地预编译 CDP 模块";
+  return fallback || (english ? "Local precompiled CDP module" : "本地预编译 CDP 模块");
 }
