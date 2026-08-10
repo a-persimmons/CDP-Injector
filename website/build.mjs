@@ -56,7 +56,6 @@ function paths(lang, page) {
 
 function icon(name) {
   const icons = {
-    cube: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 2 8 4.5v9L12 20l-8-4.5v-9L12 2Z"/><path d="m4.5 6.8 7.5 4.3 7.5-4.3M12 11v8.5"/></svg>',
     arrow: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h14m-5-5 5 5-5 5"/></svg>',
     download: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M4 17v3h16v-3"/></svg>',
     check: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m5 12 4 4L19 6"/></svg>',
@@ -77,7 +76,7 @@ function header(lang, page, p) {
     ["download", t.nav.download, p.download],
   ];
   return `<header class="site-header">
-    <a class="brand" href="${p.home}" aria-label="${t.brand}">${icon("cube")}<span>${t.brand}</span></a>
+    <a class="brand" href="${p.home}" aria-label="${t.brand}"><img src="${p.icon}" alt="" /><span>${t.brand}</span></a>
     <nav class="main-nav" aria-label="Primary navigation">
       ${nav.map(([id, label, href]) => `<a ${id === page ? 'aria-current="page"' : ""} href="${href}">${label}</a>`).join("")}
     </nav>
@@ -93,7 +92,7 @@ function header(lang, page, p) {
 function footer(lang, p) {
   const t = copy[lang];
   return `<footer class="site-footer">
-    <div><a class="brand footer-brand" href="${p.home}">${icon("cube")}<span>${t.brand}</span></a><p>${t.footer}</p></div>
+    <div><a class="brand footer-brand" href="${p.home}"><img src="${p.icon}" alt="" /><span>${t.brand}</span></a><p>${t.footer}</p></div>
     <div class="footer-links"><a href="${p.docs}">${t.nav.docs}</a><a href="${p.modules}">${t.nav.modules}</a><a href="${latestRelease}">${t.nav.download}</a><a href="${repository}">GitHub</a></div>
     <p class="copyright">© 2026 CDP Injector · Open source</p>
   </footer>`;
