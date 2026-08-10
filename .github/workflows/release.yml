@@ -67,6 +67,9 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Verify bundled Taskboard web assets
+        run: node -e "const fs = require('node:fs'); if (!fs.existsSync('builtin-modules/taskboard/dist/web/index.html')) throw new Error('Missing bundled Taskboard web assets')"
+
       - name: Prepare bundled Node runtime
         run: node scripts/prepare-node-runtime.mjs
         env:

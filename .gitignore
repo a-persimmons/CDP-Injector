@@ -13,6 +13,8 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+!builtin-modules/taskboard/dist/
+!builtin-modules/taskboard/dist/**
 *.local
 
 # Bundled runtimes and release artifacts are prepared during local/CI builds.
