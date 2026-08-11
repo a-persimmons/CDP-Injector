@@ -1,6 +1,7 @@
 {
   "id": "codex",
   "name": "Codex",
+  "applicationType": "codex-agent",
   "applicationPaths": [
     "/Applications/ChatGPT.app",
     "/Applications/Codex.app"

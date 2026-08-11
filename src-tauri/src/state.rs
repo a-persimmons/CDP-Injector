@@ -9,13 +9,18 @@ use std::{
     },
 };
 
+use tauri::Manager;
 use tokio::sync::Mutex;
 
 use crate::{
+    agent_integration::{self, AgentArtifacts},
     injection::{ORANGE_GLOW_MODULE_ID, TASKBOARD_MODULE_ID, THEME_MODULE_ID},
-    model::{ModuleServiceView, ModuleSummary, ProductProfile, ProductStatus, ProductView},
-    module_package::{self, InstalledModule, ModulePackagePreview},
-    module_service::ModuleService,
+    model::{
+        ApplicationType, ModuleServiceView, ModuleSummary, ProductProfile, ProductStatus,
+        ProductView,
+    },
+    module_package::{self, InstalledModule, ModuleManifest, ModulePackagePreview},
+    module_service::{self, ModuleService},
     session::ProductSession,
 };
 
@@ -37,8 +42,10 @@ pub struct AppState {
     pub sessions: Mutex<BTreeMap<String, Arc<Mutex<ProductSession>>>>,
     installed_modules: Mutex<BTreeMap<String, InstalledModule>>,
     services: Mutex<BTreeMap<String, ModuleService>>,
+    agent_artifacts: Mutex<BTreeMap<String, AgentArtifacts>>,
     settings_path: PathBuf,
     modules_dir: PathBuf,
+    runtime_bin_dir: PathBuf,
     quitting: AtomicBool,
 }
 
@@ -148,7 +155,11 @@ impl AppState {
         };
         let product_id = profile.id.clone();
         let modules_dir = config_dir.join("Modules");
+        let runtime_bin_dir = config_dir.join("Runtime").join("codex").join("bin");
         let installed_modules = module_package::scan_installed(&modules_dir)?;
+        let taskboard_manifest: ModuleManifest = serde_json::from_str(include_str!(
+            "../../builtin-modules/taskboard/manifest.json"
+        ))?;
         let mut modules = vec![
             ModuleSummary {
                 id: THEME_MODULE_ID.into(),
@@ -159,6 +170,8 @@ impl AppState {
                 enabled_for: vec![],
                 has_service: false,
                 browser_accessible: false,
+                agent_skills: vec![],
+                agent_commands: vec![],
             },
             ModuleSummary {
                 id: ORANGE_GLOW_MODULE_ID.into(),
@@ -169,33 +182,16 @@ impl AppState {
                 enabled_for: vec![],
                 has_service: false,
                 browser_accessible: false,
+                agent_skills: vec![],
+                agent_commands: vec![],
             },
-            ModuleSummary {
-                id: TASKBOARD_MODULE_ID.into(),
-                name: "任务看板".into(),
-                version: "0.1.0".into(),
-                description: "在 Codex 中管理本地任务与工作流".into(),
-                capabilities: vec![
-                    "renderer-injection".into(),
-                    "local-service".into(),
-                    "module-data".into(),
-                    "csp-bypass".into(),
-                ],
-                enabled_for: vec![],
-                has_service: true,
-                browser_accessible: true,
-            },
+            module_summary(&taskboard_manifest),
         ];
-        modules.extend(installed_modules.values().map(|module| ModuleSummary {
-            id: module.manifest.id.clone(),
-            name: module.manifest.name.clone(),
-            version: module.manifest.version.clone(),
-            description: module.manifest.description.clone(),
-            capabilities: module.manifest.capabilities.clone(),
-            enabled_for: vec![],
-            has_service: module.manifest.service.is_some(),
-            browser_accessible: module.manifest.service.is_some(),
-        }));
+        modules.extend(
+            installed_modules
+                .values()
+                .map(|module| module_summary(&module.manifest)),
+        );
 
         Ok(Self {
             data: Mutex::new(AppStateData {
@@ -209,6 +205,7 @@ impl AppState {
                         launch_mode: None,
                         cdp_status: "not used".into(),
                         module_errors: BTreeMap::new(),
+                        agent_integrations: BTreeMap::new(),
                     },
                 )]),
                 settings,
@@ -216,8 +213,10 @@ impl AppState {
             sessions: Mutex::new(BTreeMap::new()),
             installed_modules: Mutex::new(installed_modules),
             services: Mutex::new(BTreeMap::new()),
+            agent_artifacts: Mutex::new(BTreeMap::new()),
             settings_path,
             modules_dir,
+            runtime_bin_dir,
             quitting: AtomicBool::new(false),
         })
     }
@@ -245,17 +244,9 @@ impl AppState {
         ) {
             return Err("模块 ID 与内置模块冲突".into());
         }
-        let summary = ModuleSummary {
-            id: module.manifest.id.clone(),
-            name: module.manifest.name.clone(),
-            version: module.manifest.version.clone(),
-            description: module.manifest.description.clone(),
-            capabilities: module.manifest.capabilities.clone(),
-            enabled_for: vec![],
-            has_service: module.manifest.service.is_some(),
-            browser_accessible: module.manifest.service.is_some(),
-        };
+        let summary = module_summary(&module.manifest);
         self.stop_module_service(&summary.id).await;
+        self.stop_agent_integration(&summary.id).await;
         self.installed_modules
             .lock()
             .await
@@ -426,6 +417,98 @@ impl AppState {
         Ok(())
     }
 
+    pub async fn has_module_errors(&self, product_id: &str) -> bool {
+        self.data
+            .lock()
+            .await
+            .statuses
+            .get(product_id)
+            .is_some_and(|status| !status.module_errors.is_empty())
+    }
+
+    pub fn runtime_bin_dir(&self) -> Result<PathBuf, String> {
+        fs::create_dir_all(&self.runtime_bin_dir).map_err(|error| error.to_string())?;
+        Ok(self.runtime_bin_dir.clone())
+    }
+
+    pub async fn activate_agent_integration(
+        &self,
+        app: &tauri::AppHandle,
+        product_id: &str,
+        module_id: &str,
+        service_url: Option<&str>,
+    ) -> Result<Option<String>, String> {
+        self.stop_agent_integration(module_id).await;
+        let (module_root, spec) = if module_id == TASKBOARD_MODULE_ID {
+            let manifest: ModuleManifest = serde_json::from_str(include_str!(
+                "../../builtin-modules/taskboard/manifest.json"
+            ))
+            .map_err(|error| error.to_string())?;
+            (
+                module_service::taskboard_module_dir(app)?,
+                manifest.agent_integration,
+            )
+        } else {
+            let installed = self.installed_modules.lock().await.get(module_id).cloned();
+            let Some(installed) = installed else {
+                return Ok(None);
+            };
+            (installed.path, installed.manifest.agent_integration)
+        };
+        let Some(spec) = spec else { return Ok(None) };
+        let application_type = self
+            .data
+            .lock()
+            .await
+            .profiles
+            .iter()
+            .find(|profile| profile.id == product_id)
+            .map(|profile| profile.application_type)
+            .ok_or_else(|| format!("未知产品：{product_id}"))?;
+        if application_type != ApplicationType::CodexAgent {
+            return Err("该应用类型不支持 Agent Skill 和 CLI".into());
+        }
+
+        let skills_root = app
+            .path()
+            .home_dir()
+            .map_err(|error| error.to_string())?
+            .join(".codex/skills");
+        let runtime_bin = self.runtime_bin_dir()?;
+        let node = module_service::bundled_node(app)?;
+        let (artifacts, status) = agent_integration::activate(
+            &module_root,
+            &spec,
+            &skills_root,
+            &runtime_bin,
+            &node,
+            service_url,
+        );
+        let error = status.error.clone();
+        self.agent_artifacts
+            .lock()
+            .await
+            .insert(module_id.into(), artifacts);
+        self.data
+            .lock()
+            .await
+            .statuses
+            .get_mut(product_id)
+            .ok_or_else(|| format!("未知产品：{product_id}"))?
+            .agent_integrations
+            .insert(module_id.into(), status);
+        Ok(error)
+    }
+
+    pub async fn stop_agent_integration(&self, module_id: &str) {
+        if let Some(artifacts) = self.agent_artifacts.lock().await.remove(module_id) {
+            agent_integration::deactivate(artifacts);
+        }
+        for status in self.data.lock().await.statuses.values_mut() {
+            status.agent_integrations.remove(module_id);
+        }
+    }
+
     pub async fn ensure_module_service(
         &self,
         app: &tauri::AppHandle,
@@ -492,6 +575,13 @@ impl AppState {
         for service in services.into_values() {
             service.stop().await;
         }
+        let artifacts = std::mem::take(&mut *self.agent_artifacts.lock().await);
+        for artifact in artifacts.into_values() {
+            agent_integration::deactivate(artifact);
+        }
+        for status in self.data.lock().await.statuses.values_mut() {
+            status.agent_integrations.clear();
+        }
     }
 
     pub async fn replace_session(
@@ -514,6 +604,38 @@ impl AppState {
 
 fn temporary_path(path: &Path) -> PathBuf {
     path.with_extension("json.tmp")
+}
+
+fn module_summary(manifest: &ModuleManifest) -> ModuleSummary {
+    let integration = manifest.agent_integration.as_ref();
+    ModuleSummary {
+        id: manifest.id.clone(),
+        name: manifest.name.clone(),
+        version: manifest.version.clone(),
+        description: manifest.description.clone(),
+        capabilities: manifest.capabilities.clone(),
+        enabled_for: vec![],
+        has_service: manifest.service.is_some(),
+        browser_accessible: manifest.service.is_some(),
+        agent_skills: integration
+            .map(|value| {
+                value
+                    .skills
+                    .iter()
+                    .map(|skill| skill.name.clone())
+                    .collect()
+            })
+            .unwrap_or_default(),
+        agent_commands: integration
+            .map(|value| {
+                value
+                    .commands
+                    .iter()
+                    .map(|command| command.name.clone())
+                    .collect()
+            })
+            .unwrap_or_default(),
+    }
 }
 
 #[cfg(test)]

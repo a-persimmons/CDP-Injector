@@ -11,12 +11,14 @@ use zip::ZipArchive;
 
 const MAX_ARCHIVE_BYTES: u64 = 100 * 1024 * 1024;
 const MAX_ARCHIVE_FILES: usize = 10_000;
-const SUPPORTED_CAPABILITIES: [&str; 5] = [
+const SUPPORTED_CAPABILITIES: [&str; 7] = [
     "renderer-injection",
     "local-service",
     "module-data",
     "csp-bypass",
     "external-network",
+    "agent-skill",
+    "agent-command",
 ];
 
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -32,8 +34,32 @@ pub struct ModuleManifest {
     pub targets: Vec<ModuleTarget>,
     pub inject: InjectSpec,
     pub service: Option<ServiceSpec>,
+    pub agent_integration: Option<AgentIntegrationSpec>,
     #[serde(default)]
     pub capabilities: Vec<String>,
+}
+
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AgentIntegrationSpec {
+    pub hosts: Vec<String>,
+    #[serde(default)]
+    pub skills: Vec<AgentSkillSpec>,
+    #[serde(default)]
+    pub commands: Vec<AgentCommandSpec>,
+}
+
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct AgentSkillSpec {
+    pub name: String,
+    pub path: String,
+}
+
+#[derive(Clone, Debug, serde::Deserialize)]
+pub struct AgentCommandSpec {
+    pub name: String,
+    pub entry: String,
+    pub runtime: String,
 }
 
 #[derive(Clone, Debug, serde::Deserialize)]
@@ -76,6 +102,8 @@ pub struct ModulePackagePreview {
     pub capabilities: Vec<String>,
     pub targets: Vec<String>,
     pub has_service: bool,
+    pub agent_skills: Vec<String>,
+    pub agent_commands: Vec<String>,
 }
 
 impl From<&ModuleManifest> for ModulePackagePreview {
@@ -92,6 +120,28 @@ impl From<&ModuleManifest> for ModulePackagePreview {
                 .map(|target| format!("{}/{}", target.product, target.context))
                 .collect(),
             has_service: manifest.service.is_some(),
+            agent_skills: manifest
+                .agent_integration
+                .as_ref()
+                .map(|integration| {
+                    integration
+                        .skills
+                        .iter()
+                        .map(|skill| skill.name.clone())
+                        .collect()
+                })
+                .unwrap_or_default(),
+            agent_commands: manifest
+                .agent_integration
+                .as_ref()
+                .map(|integration| {
+                    integration
+                        .commands
+                        .iter()
+                        .map(|command| command.name.clone())
+                        .collect()
+                })
+                .unwrap_or_default(),
         }
     }
 }
@@ -277,6 +327,32 @@ fn validate_manifest(manifest: &ModuleManifest, names: &BTreeSet<String>) -> Res
     {
         return Err("service 与 local-service 能力声明必须一致".into());
     }
+    let skills = manifest
+        .agent_integration
+        .as_ref()
+        .map(|integration| !integration.skills.is_empty())
+        .unwrap_or(false);
+    let commands = manifest
+        .agent_integration
+        .as_ref()
+        .map(|integration| !integration.commands.is_empty())
+        .unwrap_or(false);
+    if skills
+        != manifest
+            .capabilities
+            .iter()
+            .any(|item| item == "agent-skill")
+    {
+        return Err("agentIntegration.skills 与 agent-skill 能力声明必须一致".into());
+    }
+    if commands
+        != manifest
+            .capabilities
+            .iter()
+            .any(|item| item == "agent-command")
+    {
+        return Err("agentIntegration.commands 与 agent-command 能力声明必须一致".into());
+    }
 
     let mut referenced = vec![manifest.icon.as_str()];
     referenced.extend(manifest.inject.entry.iter().map(String::as_str));
@@ -287,11 +363,42 @@ fn validate_manifest(manifest: &ModuleManifest, names: &BTreeSet<String>) -> Res
         }
         referenced.push(&service.entry);
     }
+    if let Some(integration) = &manifest.agent_integration {
+        if !integration.hosts.iter().any(|host| host == "codex") {
+            return Err("第一版 Agent 集成只支持 Codex".into());
+        }
+        for skill in &integration.skills {
+            validate_artifact_name(&skill.name, "Skill")?;
+            let path = safe_archive_name(&skill.path)?;
+            let skill_file = format!("{path}/SKILL.md");
+            if !names.contains(&skill_file) {
+                return Err(format!("Agent Skill 缺少入口：{skill_file}"));
+            }
+        }
+        for command in &integration.commands {
+            validate_artifact_name(&command.name, "命令")?;
+            if command.runtime != "node" {
+                return Err(format!("不支持的命令运行时：{}", command.runtime));
+            }
+            referenced.push(&command.entry);
+        }
+    }
     for path in referenced {
         let path = safe_archive_name(path)?;
         if !names.contains(&path) {
             return Err(format!("manifest 引用的文件不存在：{path}"));
         }
+    }
+    Ok(())
+}
+
+fn validate_artifact_name(name: &str, label: &str) -> Result<(), String> {
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_'))
+    {
+        return Err(format!("{label}名称只能包含英文字母、数字、连字符和下划线"));
     }
     Ok(())
 }
@@ -377,12 +484,52 @@ mod tests {
           "hubApi": 1,
           "targets": [{"product":"codex","context":"main"}],
           "inject": {"entry":"inject/index.js","styles":[],"runAt":"document-start"},
+          "agentIntegration": null,
           "capabilities": ["renderer-injection"]
         }"#;
         for (name, contents) in [
             ("manifest.json", manifest),
             ("assets/icon.png", "icon"),
             ("inject/index.js", "globalThis.testModule = true;"),
+        ] {
+            archive.start_file(name, options).unwrap();
+            archive.write_all(contents.as_bytes()).unwrap();
+        }
+        archive.finish().unwrap();
+    }
+
+    fn write_agent_package(path: &std::path::Path) {
+        let file = File::create(path).unwrap();
+        let mut archive = ZipWriter::new(file);
+        let options = SimpleFileOptions::default();
+        let manifest = r#"{
+          "schemaVersion": 1,
+          "id": "dev.example.agent-module",
+          "name": "Agent Example",
+          "version": "1.0.0",
+          "description": "Agent module",
+          "icon": "assets/icon.png",
+          "hubApi": 1,
+          "targets": [{"product":"codex","context":"main"}],
+          "inject": {"entry":"inject/index.js","styles":[],"runAt":"document-start"},
+          "service": {"entry":"service/index.mjs","healthPath":"/health","readyTimeoutMs":1000},
+          "agentIntegration": {
+            "hosts": ["codex"],
+            "skills": [{"name":"example-skill","path":"skills/example-skill"}],
+            "commands": [{"name":"examplectl","entry":"cli/examplectl.mjs","runtime":"node"}]
+          },
+          "capabilities": ["renderer-injection","local-service","agent-skill","agent-command"]
+        }"#;
+        for (name, contents) in [
+            ("manifest.json", manifest),
+            ("assets/icon.png", "icon"),
+            ("inject/index.js", "globalThis.testModule = true;"),
+            ("service/index.mjs", "console.log('service');"),
+            (
+                "skills/example-skill/SKILL.md",
+                "---\nname: example-skill\n---",
+            ),
+            ("cli/examplectl.mjs", "console.log('cli');"),
         ] {
             archive.start_file(name, options).unwrap();
             archive.write_all(contents.as_bytes()).unwrap();
@@ -400,6 +547,17 @@ mod tests {
         assert_eq!(preview.id, "dev.example.module");
         let installed = install_package(&package, &root.path().join("Modules")).unwrap();
         assert!(installed.path.join("inject/index.js").is_file());
+    }
+
+    #[test]
+    fn inspects_agent_skills_and_commands() {
+        let root = tempfile::tempdir().unwrap();
+        let package = root.path().join("agent.cdpmod");
+        write_agent_package(&package);
+
+        let preview = inspect_package(&package).unwrap();
+        assert_eq!(preview.agent_skills, ["example-skill"]);
+        assert_eq!(preview.agent_commands, ["examplectl"]);
     }
 
     #[test]

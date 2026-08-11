@@ -102,6 +102,7 @@ first built-in Profile.
   "schemaVersion": 1,
   "id": "codex",
   "name": "Codex",
+  "applicationType": "codex-agent",
   "platform": "darwin",
   "icon": "codex.png",
   "application": {
@@ -131,6 +132,11 @@ first built-in Profile.
 Product Profiles cannot contain arbitrary shell commands. CDP Injector owns
 application launching, termination, and CDP argument construction. Installable
 Product Profiles may be considered after a second product is actually tested.
+
+`applicationType` selects Injector-owned host behavior. The first implementation
+recognizes `electron` for renderer/service modules and `codex-agent` for the same
+features plus Codex Skill mounts and PATH command wrappers. Modules never provide
+arbitrary destination directories or edit shell configuration.
 
 ## Module package layout
 
@@ -232,10 +238,46 @@ local-service
 module-data
 csp-bypass
 external-network
+agent-skill
+agent-command
 ```
 
 Capabilities are declarations and warnings. They do not claim that arbitrary
 Node module code is fully sandboxed by the operating system.
+
+## Agent integration
+
+A module targeting a `codex-agent` Product may expose packaged Skills and CLI
+commands:
+
+```json
+{
+  "agentIntegration": {
+    "hosts": ["codex"],
+    "skills": [
+      {
+        "name": "manage-taskboard",
+        "path": "skills/manage-taskboard"
+      }
+    ],
+    "commands": [
+      {
+        "name": "taskctl",
+        "entry": "cli/taskctl.mjs",
+        "runtime": "node"
+      }
+    ]
+  }
+}
+```
+
+The Injector validates every path inside the package. While the module runs it
+links Skills into the supported Agent directory and generates command wrappers
+inside an Injector-owned runtime `bin` directory already present in the launched
+Product's PATH. Disabling the module removes only artifacts owned by that module.
+An existing same-name Skill is never overwritten and produces a visible partial
+failure. CLI wrappers receive the module service address through
+`CDP_MODULE_SERVICE_URL` and use the bundled Node runtime.
 
 ## Renderer lifecycle
 

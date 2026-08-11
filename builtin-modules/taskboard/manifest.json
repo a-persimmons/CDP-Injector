@@ -4,12 +4,21 @@
   "name": "任务看板",
   "version": "0.1.0",
   "description": "在 Codex 中管理本地任务与工作流",
-  "targets": ["codex"],
+  "icon": "dist/web/favicon.svg",
+  "hubApi": 1,
+  "targets": [
+    {
+      "product": "codex",
+      "context": "main"
+    }
+  ],
   "capabilities": [
     "renderer-injection",
     "local-service",
     "module-data",
-    "csp-bypass"
+    "csp-bypass",
+    "agent-skill",
+    "agent-command"
   ],
   "service": {
     "entry": "service/index.mjs",
@@ -17,6 +26,24 @@
     "readyTimeoutMs": 10000
   },
   "inject": {
-    "entry": "inject/index.js"
+    "entry": "inject/index.js",
+    "styles": [],
+    "runAt": "document-start"
+  },
+  "agentIntegration": {
+    "hosts": ["codex"],
+    "skills": [
+      {
+        "name": "manage-taskboard",
+        "path": "skills/manage-taskboard"
+      }
+    ],
+    "commands": [
+      {
+        "name": "taskctl",
+        "entry": "cli/taskctl.mjs",
+        "runtime": "node"
+      }
+    ]
   }
 }

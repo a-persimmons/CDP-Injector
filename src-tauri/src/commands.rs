@@ -90,6 +90,8 @@ async fn recover_existing_session(
             &product_id,
             if enabled_modules.is_empty() {
                 "running normally"
+            } else if state.has_module_errors(&product_id).await {
+                "partially failed"
             } else {
                 "injected"
             },
@@ -116,9 +118,30 @@ async fn install_modules(
                 return Err(error);
             }
         };
-        let source = state
-            .module_source(module_id, service_url.as_deref())
-            .await?;
+        let integration_error = match state
+            .activate_agent_integration(app, product_id, module_id, service_url.as_deref())
+            .await
+        {
+            Ok(error) => error,
+            Err(error) => {
+                state.stop_module_service(module_id).await;
+                state
+                    .set_module_error(product_id, module_id, Some(error.clone()))
+                    .await?;
+                return Err(error);
+            }
+        };
+        let source = match state.module_source(module_id, service_url.as_deref()).await {
+            Ok(source) => source,
+            Err(error) => {
+                state.stop_module_service(module_id).await;
+                state.stop_agent_integration(module_id).await;
+                state
+                    .set_module_error(product_id, module_id, Some(error.clone()))
+                    .await?;
+                return Err(error);
+            }
+        };
         if let Err(error) = session
             .install_source(
                 module_id.clone(),
@@ -128,12 +151,15 @@ async fn install_modules(
             .await
         {
             state.stop_module_service(module_id).await;
+            state.stop_agent_integration(module_id).await;
             state
                 .set_module_error(product_id, module_id, Some(error.clone()))
                 .await?;
             return Err(error);
         }
-        state.set_module_error(product_id, module_id, None).await?;
+        state
+            .set_module_error(product_id, module_id, integration_error)
+            .await?;
     }
     Ok(())
 }
@@ -225,6 +251,7 @@ pub async fn set_module_enabled(
         } else {
             let result = injection::remove_module(&mut session, &module_id).await;
             state.stop_module_service(&module_id).await;
+            state.stop_agent_integration(&module_id).await;
             state
                 .set_module_error(&product_id, &module_id, None)
                 .await?;
@@ -241,6 +268,8 @@ pub async fn set_module_enabled(
                 &product_id,
                 if enabled_modules.is_empty() {
                     "running normally"
+                } else if state.has_module_errors(&product_id).await {
+                    "partially failed"
                 } else {
                     "injected"
                 },
@@ -303,8 +332,13 @@ pub async fn launch_product(
         .await?;
 
     let contexts = profile.contexts.clone();
+    let runtime_bin = if preparation.mode == crate::model::LaunchMode::Injected {
+        Some(state.runtime_bin_dir()?)
+    } else {
+        None
+    };
     let result = tauri::async_runtime::spawn_blocking(move || {
-        product::launch_product(&profile, preparation.mode)
+        product::launch_product(&profile, preparation.mode, runtime_bin.as_deref())
     })
     .await
     .map_err(|error| error.to_string())?;
@@ -355,7 +389,16 @@ pub async fn launch_product(
             }
             let session = state.replace_session(product_id.clone(), session).await;
             if has_enabled_modules {
-                state.set_product_phase(&product_id, "injected").await?;
+                state
+                    .set_product_phase(
+                        &product_id,
+                        if state.has_module_errors(&product_id).await {
+                            "partially failed"
+                        } else {
+                            "injected"
+                        },
+                    )
+                    .await?;
             }
             spawn_session_monitor(app, product_id, session);
             Ok(())

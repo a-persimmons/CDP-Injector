@@ -50,9 +50,19 @@ const translations = {
     moduleSubtitle: "启动前选择要注入 Codex 的模块",
     importModule: "导入 .cdpmod",
     importTitle: "确认安装模块",
-    capabilityWarning: "模块会在 Codex renderer 中运行，并拥有以下能力。安装过程不会执行代码或构建依赖。",
+    capabilityWarning: "模块可能在 Codex renderer、本地服务或 Agent 环境中运行。安装过程不会执行代码或构建依赖。",
     targets: "目标",
     capabilities: "能力",
+    applicationType: "应用类型",
+    electronApp: "Electron 应用",
+    codexAgent: "Codex Agent",
+    agentIntegration: "Agent 集成",
+    agentSkills: "Agent Skills",
+    cliCommands: "CLI 命令",
+    notRequired: "不需要",
+    active: "已生效",
+    conflict: "名称冲突",
+    integrationWaiting: "等待应用启动",
     installModule: "安装模块",
     installing: "正在安装…",
     installedModules: "已安装模块",
@@ -154,9 +164,19 @@ const translations = {
     moduleSubtitle: "Choose modules to inject into Codex before launch",
     importModule: "Import .cdpmod",
     importTitle: "Confirm module installation",
-    capabilityWarning: "This module runs in the Codex renderer with the capabilities below. Installation does not execute code or build dependencies.",
+    capabilityWarning: "This module may run in the Codex renderer, a local service, or the Agent environment. Installation does not execute code or build dependencies.",
     targets: "Targets",
     capabilities: "Capabilities",
+    applicationType: "Application type",
+    electronApp: "Electron app",
+    codexAgent: "Codex Agent",
+    agentIntegration: "Agent integration",
+    agentSkills: "Agent Skills",
+    cliCommands: "CLI commands",
+    notRequired: "Not required",
+    active: "Active",
+    conflict: "Name conflict",
+    integrationWaiting: "Waiting for app launch",
     installModule: "Install module",
     installing: "Installing…",
     installedModules: "Installed modules",
@@ -255,6 +275,7 @@ const previewProduct: ProductView = {
   profile: {
     id: "codex",
     name: "Codex",
+    applicationType: "codex-agent",
     applicationPaths: [],
     processNames: [],
     contexts: [],
@@ -268,6 +289,8 @@ const previewProduct: ProductView = {
       enabledFor: ["codex"],
       hasService: false,
       browserAccessible: false,
+      agentSkills: [],
+      agentCommands: [],
       description: "为 Codex 提供主题与配色",
       capabilities: ["renderer-injection", "csp-bypass"],
     },
@@ -278,6 +301,8 @@ const previewProduct: ProductView = {
       enabledFor: ["codex"],
       hasService: false,
       browserAccessible: false,
+      agentSkills: [],
+      agentCommands: [],
       description: "为 Codex 窗口添加橙色发光边框",
       capabilities: ["renderer-injection", "csp-bypass"],
     },
@@ -288,23 +313,20 @@ const previewProduct: ProductView = {
       enabledFor: [],
       hasService: true,
       browserAccessible: true,
+      agentSkills: ["manage-taskboard"],
+      agentCommands: ["taskctl"],
       description: "在 Codex 中管理本地任务与工作流",
       capabilities: ["renderer-injection", "local-service", "module-data", "csp-bypass"],
     },
   ],
-  services: [
-    {
-      moduleId: "dev.dashi.taskboard",
-      host: "127.0.0.1",
-      port: 47823,
-    },
-  ],
+  services: [],
   status: {
     productId: "codex",
     phase: "not running",
     launchMode: "injected",
     cdpStatus: "connected",
     moduleErrors: {},
+    agentIntegrations: {},
   },
 };
 
@@ -505,6 +527,11 @@ export function App() {
     (module) =>
       module.hasService && module.enabledFor.includes(product.profile.id),
   );
+  const enabledAgentModules = product.modules.filter(
+    (module) =>
+      (module.agentSkills.length > 0 || module.agentCommands.length > 0) &&
+      module.enabledFor.includes(product.profile.id),
+  );
   const injectedModuleCount =
     product.status.phase === "injected"
       ? enabledModuleCount
@@ -561,7 +588,10 @@ export function App() {
 
         <div className="product-picker">
           <Cube size={21} />
-          <strong>{product.profile.name}</strong>
+          <span className="product-picker-copy">
+            <strong>{product.profile.name}</strong>
+            <small>{applicationTypeLabel(product.profile.applicationType, text)}</small>
+          </span>
           <CaretDown size={15} />
         </div>
 
@@ -759,6 +789,33 @@ export function App() {
           );
         })}
 
+        {enabledAgentModules.map((module) => {
+          const integration = product.status.agentIntegrations[module.id];
+          return (
+            <div
+              className={integration && !integration.error ? "service-panel running" : "service-panel"}
+              key={`${module.id}-agent`}
+            >
+              <TerminalWindow size={19} />
+              <p>
+                <strong>{text.agentIntegration}</strong>
+                <span>
+                  {integration
+                    ? [
+                        module.agentSkills.length > 0
+                          ? `${text.agentSkills}: ${integrationStatusLabel(integration.skillStatus, text)}`
+                          : "",
+                        module.agentCommands.length > 0
+                          ? `${text.cliCommands}: ${integrationStatusLabel(integration.commandStatus, text)}`
+                          : "",
+                      ].filter(Boolean).join(" · ")
+                    : text.integrationWaiting}
+                </span>
+              </p>
+            </div>
+          );
+        })}
+
         {moduleErrors.length > 0 && (
           <div className="error-panel">
             <Warning size={19} weight="bold" />
@@ -842,6 +899,12 @@ export function App() {
             <dl className="import-metadata">
               <div><dt>{text.targets}</dt><dd>{pendingImport.module.targets.join(", ")}</dd></div>
               <div><dt>{text.capabilities}</dt><dd>{pendingImport.module.capabilities.join(", ")}</dd></div>
+              {pendingImport.module.agentSkills.length > 0 && (
+                <div><dt>{text.agentSkills}</dt><dd>{pendingImport.module.agentSkills.join(", ")}</dd></div>
+              )}
+              {pendingImport.module.agentCommands.length > 0 && (
+                <div><dt>{text.cliCommands}</dt><dd>{pendingImport.module.agentCommands.join(", ")}</dd></div>
+              )}
             </dl>
             {error && <p className="module-detail-error">{error}</p>}
             <div className="dialog-actions">
@@ -881,6 +944,7 @@ function ModuleDetailsDialog({
   const service = product.services.find(
     (candidate) => candidate.moduleId === module.id,
   );
+  const integration = product.status.agentIntegrations[module.id];
   const state = error
     ? "error"
     : !enabled
@@ -953,7 +1017,7 @@ function ModuleDetailsDialog({
           </div>
           <div>
             <dt>{text.targetApplication}</dt>
-            <dd>{product.profile.name}</dd>
+            <dd>{product.profile.name} · {applicationTypeLabel(product.profile.applicationType, text)}</dd>
           </div>
           <div>
             <dt>{text.serviceStatus}</dt>
@@ -971,6 +1035,18 @@ function ModuleDetailsDialog({
             <dt>{text.browserAccess}</dt>
             <dd>{module.browserAccessible ? text.supported : text.unsupported}</dd>
           </div>
+          {module.agentSkills.length > 0 && (
+            <div>
+              <dt>{text.agentSkills}</dt>
+              <dd>{module.agentSkills.join(", ")} · {integration ? integrationStatusLabel(integration.skillStatus, text) : text.integrationWaiting}</dd>
+            </div>
+          )}
+          {module.agentCommands.length > 0 && (
+            <div>
+              <dt>{text.cliCommands}</dt>
+              <dd>{module.agentCommands.join(", ")} · {integration ? integrationStatusLabel(integration.commandStatus, text) : text.integrationWaiting}</dd>
+            </div>
+          )}
         </dl>
 
         {error && <p className="module-detail-error">{error}</p>}
@@ -1058,6 +1134,11 @@ function Diagnostics({
       </div>
       <div className="diagnostic-list">
         <DiagnosticRow
+          icon={Cube}
+          label={text.applicationType}
+          value={applicationTypeLabel(product.profile.applicationType, text)}
+        />
+        <DiagnosticRow
           icon={AppWindow}
           label="Codex"
           value={runtimeLabel}
@@ -1091,6 +1172,26 @@ function Diagnostics({
                     ? `${service.host}:${service.port}`
                     : enabled
                       ? text.waitingToStart
+                      : text.disabled
+                }
+              />
+            );
+          })}
+        {product.modules
+          .filter((module) => module.agentSkills.length > 0 || module.agentCommands.length > 0)
+          .map((module) => {
+            const integration = product.status.agentIntegrations[module.id];
+            const enabled = module.enabledFor.includes(product.profile.id);
+            return (
+              <DiagnosticRow
+                icon={TerminalWindow}
+                key={`${module.id}-agent`}
+                label={`${moduleName(module.id, language, module.name)} ${text.agentIntegration}`}
+                value={
+                  integration
+                    ? integration.error ?? text.active
+                    : enabled
+                      ? text.integrationWaiting
                       : text.disabled
                 }
               />
@@ -1198,4 +1299,18 @@ function moduleDescription(moduleId: string, language: Language, fallback: strin
       : "在 Codex 中管理本地任务与工作流";
   }
   return fallback || (english ? "Local precompiled CDP module" : "本地预编译 CDP 模块");
+}
+
+function applicationTypeLabel(
+  applicationType: ProductView["profile"]["applicationType"],
+  text: Translation,
+) {
+  return applicationType === "codex-agent" ? text.codexAgent : text.electronApp;
+}
+
+function integrationStatusLabel(status: string, text: Translation) {
+  if (status === "active") return text.active;
+  if (status === "conflict") return text.conflict;
+  if (status === "not required") return text.notRequired;
+  return text.failed;
 }

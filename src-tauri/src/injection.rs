@@ -218,6 +218,7 @@ mod tests {
                     run_at: "document-start".into(),
                 },
                 service: None,
+                agent_integration: None,
                 capabilities: vec!["renderer-injection".into()],
             },
         };

@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 export type ProductProfile = {
   id: string;
   name: string;
+  applicationType: "electron" | "codex-agent";
   applicationPaths: string[];
   processNames: string[];
   contexts: {
@@ -26,6 +27,8 @@ export type ModuleSummary = {
   enabledFor: string[];
   hasService: boolean;
   browserAccessible: boolean;
+  agentSkills: string[];
+  agentCommands: string[];
 };
 
 export type ModulePackagePreview = {
@@ -36,6 +39,8 @@ export type ModulePackagePreview = {
   capabilities: string[];
   targets: string[];
   hasService: boolean;
+  agentSkills: string[];
+  agentCommands: string[];
 };
 
 export type ProductView = {
@@ -52,6 +57,13 @@ export type ProductView = {
     launchMode: "normal" | "injected" | null;
     cdpStatus: "not used" | "connecting" | "connected" | "disconnected";
     moduleErrors: Record<string, string>;
+    agentIntegrations: Record<string, {
+      skillStatus: "not required" | "active" | "conflict" | "error";
+      commandStatus: "not required" | "active" | "conflict" | "error";
+      skills: string[];
+      commands: string[];
+      error: string | null;
+    }>;
   };
 };
 

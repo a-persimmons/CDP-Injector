@@ -274,8 +274,18 @@ const server = createServer((request, response) => {
 server.listen(port, host);
 process.on("SIGTERM", () => server.close());`;
 
+const agentExample = `"agentIntegration": {
+  "hosts": ["codex"],
+  "skills": [
+    { "name": "manage-taskboard", "path": "skills/manage-taskboard" }
+  ],
+  "commands": [
+    { "name": "taskctl", "entry": "cli/taskctl.mjs", "runtime": "node" }
+  ]
+}`;
+
 function modulesZh() {
-  return docShell({ eyebrow: "Hub API 1", title: "开发一个 .cdpmod 模块", lead: "模块项目可使用任意工具链；交付物必须是已经构建完成、可直接运行的 ZIP 包。", toc: [["contract","边界与结构"],["manifest","Manifest"],["renderer","Renderer 生命周期"],["service","本地服务"],["package","打包"],["test","测试与发布"]], body: `
+  return docShell({ eyebrow: "Hub API 1", title: "开发一个 .cdpmod 模块", lead: "模块项目可使用任意工具链；交付物必须是已经构建完成、可直接运行的 ZIP 包。", toc: [["contract","边界与结构"],["manifest","Manifest"],["renderer","Renderer 生命周期"],["service","本地服务"],["agent","Agent 集成"],["package","打包"],["test","测试与发布"]], body: `
     <section id="contract"><h2>边界与目录结构</h2><p><code>.cdpmod</code> 是扩展名不同的 ZIP 文件，<code>manifest.json</code> 必须位于压缩包根目录。第一版只接受 Codex 的 <code>main</code> renderer，并在 <code>document-start</code> 注入。</p>${codeBlock("text", `focus-mode.cdpmod/
 ├── manifest.json
 ├── inject/
@@ -283,7 +293,7 @@ function modulesZh() {
 │   └── index.css
 └── assets/
     └── icon.png`)}<p>需要 Web/API 的模块可额外包含 <code>service/index.mjs</code> 和已经构建完成的静态资源。不要包含 <code>node_modules</code>、符号链接、安装脚本或要求用户执行的命令。</p></section>
-    <section id="manifest"><h2>Manifest</h2>${codeBlock("json", manifestExample)}<h3>必填规则</h3><ul><li><code>schemaVersion</code> 与 <code>hubApi</code> 当前都必须为 <code>1</code>。</li><li><code>id</code> 仅能包含英文字母、数字、点和连字符，推荐反向域名。</li><li><code>version</code> 必须是 SemVer。</li><li><code>targets</code> 至少包含 <code>{ product: "codex", context: "main" }</code>。</li><li><code>inject</code> 至少提供 JavaScript 入口或一个样式文件，<code>runAt</code> 必须为 <code>document-start</code>。</li><li><code>icon</code>、入口、样式和服务路径都必须真实存在于包内。</li></ul><h3>能力声明</h3><div class="capability-list docs"><span>renderer-injection</span><span>local-service</span><span>module-data</span><span>csp-bypass</span><span>external-network</span></div><p>能力会在安装前展示给用户。它们是权限披露，不代表 Node 模块已经获得操作系统级完全沙箱。</p></section>
+    <section id="manifest"><h2>Manifest</h2>${codeBlock("json", manifestExample)}<h3>必填规则</h3><ul><li><code>schemaVersion</code> 与 <code>hubApi</code> 当前都必须为 <code>1</code>。</li><li><code>id</code> 仅能包含英文字母、数字、点和连字符，推荐反向域名。</li><li><code>version</code> 必须是 SemVer。</li><li><code>targets</code> 至少包含 <code>{ product: "codex", context: "main" }</code>。</li><li><code>inject</code> 至少提供 JavaScript 入口或一个样式文件，<code>runAt</code> 必须为 <code>document-start</code>。</li><li><code>icon</code>、入口、样式、Skill 和命令路径都必须真实存在于包内。</li></ul><h3>能力声明</h3><div class="capability-list docs"><span>renderer-injection</span><span>local-service</span><span>module-data</span><span>csp-bypass</span><span>external-network</span><span>agent-skill</span><span>agent-command</span></div><p>能力会在安装前展示给用户。它们是权限披露，不代表 Node 模块已经获得操作系统级完全沙箱。</p></section>
     <section id="renderer"><h2>Renderer 生命周期</h2><p>JavaScript 入口需要用 <code>globalThis.cdpHub.register</code> 注册同一个模块 ID：</p>${codeBlock("js", lifecycleExample)}<p><code>activate(context)</code> 可以是异步函数，必须返回 cleanup 函数。cleanup 负责移除 DOM、监听器、定时器和 observer；模块创建的 DOM 应添加 <code>data-cdp-hub-owner</code>。</p>${codeBlock("ts", `type ModuleContext = {
   module: { id: string; version: string };
   product: { id: "codex" };
@@ -301,6 +311,7 @@ CDP_HUB_HOST=127.0.0.1
 CDP_HUB_PORT=<allocated-port>
 CDP_HUB_SESSION_TOKEN=<random-token>
 CDP_HUB_PRODUCT_ID=codex`)}${codeBlock("js", serviceExample)}<p>服务必须绑定给定 loopback 地址与端口，在健康路径返回 HTTP 200，把持久数据写入 <code>CDP_HUB_DATA_DIR</code>，并在 <code>SIGTERM</code> 时清理资源。第一版避免 native Node addons。</p></section>
+    <section id="agent"><h2>Codex Agent 集成</h2><p>只有 <code>codex-agent</code> 类型的应用支持 Skill 与 PATH 命令。声明对应能力并提供：</p>${codeBlock("json", agentExample)}<p>每个 Skill 目录必须包含 <code>SKILL.md</code>。CLI 使用应用内置 Node 运行，并从 <code>CDP_MODULE_SERVICE_URL</code> 读取当前模块服务地址。注入器只在模块运行期间创建 Skill 软链接和命令包装器；不会修改 shell 配置，也不会覆盖已有同名 Skill。</p></section>
     <section id="package"><h2>构建与打包</h2><ol><li>在开发仓库中完成前端/服务构建。</li><li>复制运行所需的最小文件到一个 staging 目录。</li><li>保证 <code>manifest.json</code> 位于 staging 根目录。</li><li>从 staging 目录内部创建 ZIP，再将扩展名设为 <code>.cdpmod</code>。</li></ol>${codeBlock("sh", `cd staging
 zip -r ../dev.example.focus-mode-1.0.0.cdpmod . \\
   -x "*.DS_Store" "__MACOSX/*" "node_modules/*"`)}<p>不要把源代码仓库外层目录一起压入包中，否则安装器无法在根目录找到 manifest。解压后总体积不能超过 100 MB，文件数不能超过 10,000。</p></section>
@@ -308,7 +319,7 @@ zip -r ../dev.example.focus-mode-1.0.0.cdpmod . \\
 }
 
 function modulesEn() {
-  return docShell({ eyebrow: "Hub API 1", title: "Build a .cdpmod module", lead: "Use any toolchain in your module project. The delivered ZIP must already be built and ready to run.", toc: [["contract","Contract and layout"],["manifest","Manifest"],["renderer","Renderer lifecycle"],["service","Local service"],["package","Packaging"],["test","Test and release"]], body: `
+  return docShell({ eyebrow: "Hub API 1", title: "Build a .cdpmod module", lead: "Use any toolchain in your module project. The delivered ZIP must already be built and ready to run.", toc: [["contract","Contract and layout"],["manifest","Manifest"],["renderer","Renderer lifecycle"],["service","Local service"],["agent","Agent integration"],["package","Packaging"],["test","Test and release"]], body: `
     <section id="contract"><h2>Contract and layout</h2><p>A <code>.cdpmod</code> is a ZIP with a different extension. <code>manifest.json</code> must be at its root. Hub API 1 accepts the Codex <code>main</code> renderer and injects at <code>document-start</code>.</p>${codeBlock("text", `focus-mode.cdpmod/
 ├── manifest.json
 ├── inject/
@@ -316,7 +327,7 @@ function modulesEn() {
 │   └── index.css
 └── assets/
     └── icon.png`)}<p>Web/API modules may also contain <code>service/index.mjs</code> and prebuilt static assets. Never ship <code>node_modules</code>, symlinks, install scripts, or commands the user must run.</p></section>
-    <section id="manifest"><h2>Manifest</h2>${codeBlock("json", manifestExample)}<h3>Required rules</h3><ul><li><code>schemaVersion</code> and <code>hubApi</code> must both be <code>1</code>.</li><li><code>id</code> accepts ASCII letters, numbers, dots, and hyphens; reverse-domain notation is recommended.</li><li><code>version</code> must follow SemVer.</li><li><code>targets</code> must include <code>{ product: "codex", context: "main" }</code>.</li><li><code>inject</code> needs a script entry or at least one stylesheet; <code>runAt</code> must be <code>document-start</code>.</li><li>Every referenced icon, entry, style, and service path must exist in the archive.</li></ul><h3>Capability declarations</h3><div class="capability-list docs"><span>renderer-injection</span><span>local-service</span><span>module-data</span><span>csp-bypass</span><span>external-network</span></div><p>Capabilities are disclosed before installation. They are warnings, not a claim of complete OS-level sandboxing for arbitrary Node code.</p></section>
+    <section id="manifest"><h2>Manifest</h2>${codeBlock("json", manifestExample)}<h3>Required rules</h3><ul><li><code>schemaVersion</code> and <code>hubApi</code> must both be <code>1</code>.</li><li><code>id</code> accepts ASCII letters, numbers, dots, and hyphens; reverse-domain notation is recommended.</li><li><code>version</code> must follow SemVer.</li><li><code>targets</code> must include <code>{ product: "codex", context: "main" }</code>.</li><li><code>inject</code> needs a script entry or at least one stylesheet; <code>runAt</code> must be <code>document-start</code>.</li><li>Every referenced icon, entry, style, Skill, and command path must exist in the archive.</li></ul><h3>Capability declarations</h3><div class="capability-list docs"><span>renderer-injection</span><span>local-service</span><span>module-data</span><span>csp-bypass</span><span>external-network</span><span>agent-skill</span><span>agent-command</span></div><p>Capabilities are disclosed before installation. They are warnings, not a claim of complete OS-level sandboxing for arbitrary Node code.</p></section>
     <section id="renderer"><h2>Renderer lifecycle</h2><p>The JavaScript entry registers the same module ID with <code>globalThis.cdpHub.register</code>:</p>${codeBlock("js", lifecycleExample)}<p><code>activate(context)</code> may be async and must return a cleanup function. Cleanup removes DOM, listeners, timers, and observers. Add <code>data-cdp-hub-owner</code> to module-owned DOM.</p>${codeBlock("ts", `type ModuleContext = {
   module: { id: string; version: string };
   product: { id: "codex" };
@@ -334,6 +345,7 @@ CDP_HUB_HOST=127.0.0.1
 CDP_HUB_PORT=<allocated-port>
 CDP_HUB_SESSION_TOKEN=<random-token>
 CDP_HUB_PRODUCT_ID=codex`)}${codeBlock("js", serviceExample)}<p>Bind to the supplied loopback host and port, return HTTP 200 from the health path, persist under <code>CDP_HUB_DATA_DIR</code>, and clean up on <code>SIGTERM</code>. Avoid native Node addons in the first package format.</p></section>
+    <section id="agent"><h2>Codex Agent integration</h2><p>Only <code>codex-agent</code> applications expose Skills and PATH commands. Declare the matching capabilities and add:</p>${codeBlock("json", agentExample)}<p>Every Skill directory must contain <code>SKILL.md</code>. CLI entries run with the bundled Node runtime and read the current service address from <code>CDP_MODULE_SERVICE_URL</code>. The Injector mounts links and wrappers only while the module runs; it never edits shell configuration or overwrites an existing Skill.</p></section>
     <section id="package"><h2>Build and package</h2><ol><li>Complete all frontend and service builds in the developer project.</li><li>Copy only runtime files into a staging directory.</li><li>Place <code>manifest.json</code> at the staging root.</li><li>Create a ZIP from inside staging, then use the <code>.cdpmod</code> extension.</li></ol>${codeBlock("sh", `cd staging
 zip -r ../dev.example.focus-mode-1.0.0.cdpmod . \\
   -x "*.DS_Store" "__MACOSX/*" "node_modules/*"`)}<p>Do not wrap staging in another directory. Extracted size is capped at 100 MB and packages may contain at most 10,000 files.</p></section>

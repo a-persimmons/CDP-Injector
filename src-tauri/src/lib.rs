@@ -1,3 +1,4 @@
+mod agent_integration;
 mod cdp;
 mod commands;
 mod injection;

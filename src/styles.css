@@ -134,8 +134,21 @@ input:focus-visible + span {
   font-size: 14px;
 }
 
-.product-picker strong {
+.product-picker-copy {
   flex: 1;
+  min-width: 0;
+}
+
+.product-picker-copy strong,
+.product-picker-copy small {
+  display: block;
+}
+
+.product-picker-copy small {
+  margin-top: 2px;
+  color: var(--text-faint);
+  font-size: 10px;
+  font-weight: 500;
 }
 
 nav {
@@ -506,6 +519,10 @@ nav {
 
 .service-panel.running > svg {
   color: var(--success);
+}
+
+.service-panel + .service-panel {
+  margin-top: 8px;
 }
 
 .service-panel p {

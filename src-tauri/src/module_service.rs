@@ -21,11 +21,7 @@ impl ModuleService {
         if module_id != TASKBOARD_MODULE_ID {
             return Err(format!("模块不包含本地服务：{module_id}"));
         }
-        let module_dir = bundled_path(
-            app,
-            "../builtin-modules/taskboard",
-            "builtin-modules/taskboard",
-        )?;
+        let module_dir = taskboard_module_dir(app)?;
         Self::start(
             app,
             module_id,
@@ -74,11 +70,7 @@ impl ModuleService {
             .port();
         drop(listener);
 
-        #[cfg(target_os = "windows")]
-        let node_relative = "resources/node/node.exe";
-        #[cfg(not(target_os = "windows"))]
-        let node_relative = "resources/node/node";
-        let node = bundled_path(app, node_relative, node_relative)?;
+        let node = bundled_node(app)?;
         let data_dir = app
             .path()
             .app_data_dir()
@@ -157,6 +149,22 @@ impl ModuleService {
             let _ = self.child.kill().await;
         }
     }
+}
+
+pub(crate) fn taskboard_module_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    bundled_path(
+        app,
+        "../builtin-modules/taskboard",
+        "builtin-modules/taskboard",
+    )
+}
+
+pub(crate) fn bundled_node(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    #[cfg(target_os = "windows")]
+    let node_relative = "resources/node/node.exe";
+    #[cfg(not(target_os = "windows"))]
+    let node_relative = "resources/node/node";
+    bundled_path(app, node_relative, node_relative)
 }
 
 fn bundled_path(
