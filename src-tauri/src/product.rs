@@ -39,7 +39,7 @@ pub fn launch_product(profile: &ProductProfile, mode: LaunchMode) -> Result<Opti
 
     if is_product_running(profile)? {
         request_quit(&application)?;
-        wait_for_exit(profile, Duration::from_secs(15))?;
+        wait_for_exit(profile, &application, Duration::from_secs(15))?;
     }
 
     let port = reserve_loopback_port()?;
@@ -125,15 +125,41 @@ fn request_quit(application: &Path) -> Result<(), String> {
     }
 }
 
-fn wait_for_exit(profile: &ProductProfile, timeout: Duration) -> Result<(), String> {
+fn wait_for_exit(
+    profile: &ProductProfile,
+    application: &Path,
+    timeout: Duration,
+) -> Result<(), String> {
     let deadline = Instant::now() + timeout;
     while Instant::now() < deadline {
-        if !is_product_running(profile)? {
+        if !is_product_running(profile)? && !has_active_application_processes(application)? {
             return Ok(());
         }
         thread::sleep(Duration::from_millis(250));
     }
-    Err(format!("请手动退出 {} 后重试", profile.name))
+    Err(format!("{} 尚未完全退出，请稍后重试", profile.name))
+}
+
+fn has_active_application_processes(application: &Path) -> Result<bool, String> {
+    let output = Command::new("/bin/ps")
+        .args(["-ax", "-o", "command="])
+        .output()
+        .map_err(|error| format!("无法检查应用辅助进程：{error}"))?;
+    if !output.status.success() {
+        return Err("无法检查应用辅助进程".into());
+    }
+    Ok(contains_active_application_process(
+        &String::from_utf8_lossy(&output.stdout),
+        &format!("{}/Contents/", application.display()),
+    ))
+}
+
+fn contains_active_application_process(processes: &str, bundle_prefix: &str) -> bool {
+    processes.lines().map(str::trim_start).any(|process| {
+        process.starts_with(bundle_prefix)
+            && !process.contains("/browser_crashpad_handler")
+            && !process.contains("/Resources/cua_node/")
+    })
 }
 
 fn reserve_loopback_port() -> Result<u16, String> {
@@ -145,9 +171,6 @@ fn reserve_loopback_port() -> Result<u16, String> {
 
 fn run_open(application: &Path, cdp_args: &[String]) -> Result<(), String> {
     let mut command = Command::new("/usr/bin/open");
-    if !cdp_args.is_empty() {
-        command.arg("-n");
-    }
     command.arg("-a").arg(application);
     if !cdp_args.is_empty() {
         command.arg("--args");
@@ -167,7 +190,7 @@ fn run_open(application: &Path, cdp_args: &[String]) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{decide_launch, parse_cdp_port, LaunchMode};
+    use super::{contains_active_application_process, decide_launch, parse_cdp_port, LaunchMode};
 
     #[test]
     fn launch_decision() {
@@ -184,5 +207,26 @@ mod tests {
         );
 
         assert_eq!(parse_cdp_port(&processes, executable), Some(49315));
+    }
+
+    #[test]
+    fn waits_for_application_helpers_but_not_persistent_codex_processes() {
+        let prefix = "/Applications/ChatGPT.app/Contents/";
+        assert!(contains_active_application_process(
+            "/Applications/ChatGPT.app/Contents/Frameworks/Codex (Renderer).app/Contents/MacOS/Codex (Renderer) --type=renderer",
+            prefix,
+        ));
+        assert!(contains_active_application_process(
+            "/Applications/ChatGPT.app/Contents/Resources/codex app-server",
+            prefix,
+        ));
+        assert!(!contains_active_application_process(
+            "/Applications/ChatGPT.app/Contents/Frameworks/Codex Framework.framework/Helpers/browser_crashpad_handler",
+            prefix,
+        ));
+        assert!(!contains_active_application_process(
+            "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node kernel.js",
+            prefix,
+        ));
     }
 }
