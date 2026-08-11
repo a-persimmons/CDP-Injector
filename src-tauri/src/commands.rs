@@ -332,13 +332,8 @@ pub async fn launch_product(
         .await?;
 
     let contexts = profile.contexts.clone();
-    let runtime_bin = if preparation.mode == crate::model::LaunchMode::Injected {
-        Some(state.runtime_bin_dir()?)
-    } else {
-        None
-    };
     let result = tauri::async_runtime::spawn_blocking(move || {
-        product::launch_product(&profile, preparation.mode, runtime_bin.as_deref())
+        product::launch_product(&profile, preparation.mode)
     })
     .await
     .map_err(|error| error.to_string())?;

@@ -1,7 +1,7 @@
 use std::{
     net::TcpListener,
     path::{Path, PathBuf},
-    process::{Command, Stdio},
+    process::Command,
     thread,
     time::{Duration, Instant},
 };
@@ -29,11 +29,7 @@ pub fn prepare_launch(
     })
 }
 
-pub fn launch_product(
-    profile: &ProductProfile,
-    mode: LaunchMode,
-    runtime_bin: Option<&Path>,
-) -> Result<Option<u16>, String> {
+pub fn launch_product(profile: &ProductProfile, mode: LaunchMode) -> Result<Option<u16>, String> {
     let application = resolve_application(profile)?;
 
     if mode == LaunchMode::Normal {
@@ -51,41 +47,8 @@ pub fn launch_product(
         format!("--remote-debugging-port={port}"),
         "--remote-allow-origins=*".into(),
     ];
-    if let Some(runtime_bin) = runtime_bin {
-        run_with_environment(&application, &arguments, runtime_bin)?;
-    } else {
-        run_open(&application, &arguments)?;
-    }
+    run_open(&application, &arguments)?;
     Ok(Some(port))
-}
-
-fn run_with_environment(
-    application: &Path,
-    arguments: &[String],
-    runtime_bin: &Path,
-) -> Result<(), String> {
-    let name = application
-        .file_stem()
-        .and_then(|name| name.to_str())
-        .ok_or("应用名称无效")?;
-    #[cfg(target_os = "macos")]
-    let executable = application.join("Contents/MacOS").join(name);
-    #[cfg(not(target_os = "macos"))]
-    let executable = application.to_path_buf();
-    let current_path = std::env::var_os("PATH").unwrap_or_default();
-    let path = std::env::join_paths(
-        std::iter::once(runtime_bin.to_path_buf()).chain(std::env::split_paths(&current_path)),
-    )
-    .map_err(|error| error.to_string())?;
-    Command::new(executable)
-        .args(arguments)
-        .env("PATH", path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| format!("无法启动 {name}：{error}"))
 }
 
 fn resolve_application(profile: &ProductProfile) -> Result<PathBuf, String> {
@@ -221,36 +184,5 @@ mod tests {
         );
 
         assert_eq!(parse_cdp_port(&processes, executable), Some(49315));
-    }
-
-    #[test]
-    #[cfg(target_os = "macos")]
-    fn launches_with_runtime_bin_first_in_path() {
-        use std::{fs, os::unix::fs::PermissionsExt, thread, time::Duration};
-
-        let root = tempfile::tempdir().unwrap();
-        let application = root.path().join("Fake.app");
-        let executable = application.join("Contents/MacOS/Fake");
-        let output = root.path().join("path.txt");
-        let runtime_bin = root.path().join("runtime-bin");
-        fs::create_dir_all(executable.parent().unwrap()).unwrap();
-        fs::create_dir_all(&runtime_bin).unwrap();
-        fs::write(
-            &executable,
-            format!("#!/bin/sh\nprintf '%s' \"$PATH\" > {}\n", output.display()),
-        )
-        .unwrap();
-        fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
-
-        super::run_with_environment(&application, &[], &runtime_bin).unwrap();
-        for _ in 0..20 {
-            if output.is_file() {
-                break;
-            }
-            thread::sleep(Duration::from_millis(25));
-        }
-
-        let path = fs::read_to_string(output).unwrap();
-        assert_eq!(std::env::split_paths(&path).next(), Some(runtime_bin));
     }
 }

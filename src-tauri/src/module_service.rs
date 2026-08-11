@@ -6,7 +6,10 @@ use std::{
 };
 
 use tauri::Manager;
-use tokio::process::{Child, Command};
+use tokio::{
+    io::AsyncReadExt,
+    process::{Child, Command},
+};
 
 use crate::injection::TASKBOARD_MODULE_ID;
 
@@ -96,7 +99,7 @@ impl ModuleService {
             .env("NODE_NO_WARNINGS", "1")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .kill_on_drop(true)
             .spawn()
             .map_err(|error| format!("无法启动模块服务：{error}"))?;
@@ -110,7 +113,15 @@ impl ModuleService {
         let deadline = tokio::time::Instant::now() + Duration::from_millis(ready_timeout_ms);
         while tokio::time::Instant::now() < deadline {
             if let Some(status) = child.try_wait().map_err(|error| error.to_string())? {
-                return Err(format!("任务看板服务提前退出：{status}"));
+                let mut details = String::new();
+                if let Some(mut stderr) = child.stderr.take() {
+                    let _ = stderr.read_to_string(&mut details).await;
+                }
+                return Err(if details.trim().is_empty() {
+                    format!("任务看板服务提前退出：{status}")
+                } else {
+                    format!("任务看板服务提前退出：{}", details.trim())
+                });
             }
             if reqwest::get(format!("{origin}{health_path}"))
                 .await
