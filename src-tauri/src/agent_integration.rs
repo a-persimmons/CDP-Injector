@@ -8,6 +8,7 @@ use crate::{model::AgentIntegrationStatus, module_package::AgentIntegrationSpec}
 pub struct AgentArtifacts {
     skill_links: Vec<(PathBuf, PathBuf)>,
     command_paths: Vec<PathBuf>,
+    command_links: Vec<(PathBuf, PathBuf)>,
 }
 
 pub fn activate(
@@ -15,16 +16,19 @@ pub fn activate(
     spec: &AgentIntegrationSpec,
     skills_root: &Path,
     runtime_bin: &Path,
+    command_bin: Option<&Path>,
     node: &Path,
     service_url: Option<&str>,
 ) -> (AgentArtifacts, AgentIntegrationStatus) {
     let mut artifacts = AgentArtifacts {
         skill_links: vec![],
         command_paths: vec![],
+        command_links: vec![],
     };
     let mut errors = Vec::new();
     let mut mounted_skills = 0;
     let mut mounted_commands = 0;
+    let mut command_conflicted = false;
 
     for skill in &spec.skills {
         let source = module_root.join(&skill.path);
@@ -42,6 +46,16 @@ pub fn activate(
         let entry = module_root.join(&command.entry);
         match write_command_wrapper(runtime_bin, &command.name, node, &entry, service_url) {
             Ok(path) => {
+                if let Some(command_bin) = command_bin {
+                    let destination = command_bin.join(&command.name);
+                    if let Err(error) = mount_command(&path, &destination) {
+                        let _ = fs::remove_file(&path);
+                        command_conflicted = true;
+                        errors.push(error);
+                        continue;
+                    }
+                    artifacts.command_links.push((destination, path.clone()));
+                }
                 mounted_commands += 1;
                 artifacts.command_paths.push(path);
             }
@@ -50,7 +64,15 @@ pub fn activate(
     }
 
     let skill_status = artifact_status(spec.skills.len(), mounted_skills, "conflict");
-    let command_status = artifact_status(spec.commands.len(), mounted_commands, "error");
+    let command_status = artifact_status(
+        spec.commands.len(),
+        mounted_commands,
+        if command_conflicted {
+            "conflict"
+        } else {
+            "error"
+        },
+    );
     let status = AgentIntegrationStatus {
         skill_status: skill_status.into(),
         command_status: command_status.into(),
@@ -66,6 +88,11 @@ pub fn activate(
 }
 
 pub fn deactivate(artifacts: AgentArtifacts) {
+    for (link, source) in artifacts.command_links {
+        if fs::read_link(&link).ok().as_deref() == Some(source.as_path()) {
+            let _ = fs::remove_file(link);
+        }
+    }
     for path in artifacts.command_paths {
         let _ = fs::remove_file(path);
     }
@@ -109,14 +136,41 @@ fn mount_skill(source: &Path, destination: &Path) -> Result<(), String> {
     create_directory_link(source, destination).map_err(|error| error.to_string())
 }
 
+fn mount_command(source: &Path, destination: &Path) -> Result<(), String> {
+    if let Ok(target) = fs::read_link(destination) {
+        return if target == source {
+            Ok(())
+        } else {
+            Err(format!("命令名称冲突：{}", destination.display()))
+        };
+    }
+    if destination.exists() {
+        return Err(format!("命令名称冲突：{}", destination.display()));
+    }
+    if let Some(parent) = destination.parent() {
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+    }
+    create_file_link(source, destination).map_err(|error| error.to_string())
+}
+
 #[cfg(unix)]
 fn create_directory_link(source: &Path, destination: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(source, destination)
+}
+
+#[cfg(unix)]
+fn create_file_link(source: &Path, destination: &Path) -> std::io::Result<()> {
     std::os::unix::fs::symlink(source, destination)
 }
 
 #[cfg(windows)]
 fn create_directory_link(source: &Path, destination: &Path) -> std::io::Result<()> {
     std::os::windows::fs::symlink_dir(source, destination)
+}
+
+#[cfg(windows)]
+fn create_file_link(source: &Path, destination: &Path) -> std::io::Result<()> {
+    std::os::windows::fs::symlink_file(source, destination)
 }
 
 fn write_command_wrapper(
@@ -196,11 +250,13 @@ mod tests {
 
         let skills_root = root.path().join("codex-skills");
         let runtime_bin = root.path().join("bin");
+        let command_bin = root.path().join("user-bin");
         let (artifacts, status) = activate(
             &module,
             &spec,
             &skills_root,
             &runtime_bin,
+            Some(&command_bin),
             Path::new("/usr/bin/node"),
             Some("http://127.0.0.1:47823"),
         );
@@ -209,8 +265,25 @@ mod tests {
         assert_eq!(status.command_status, "active");
         assert!(skills_root.join("manage-taskboard").is_symlink());
         assert!(runtime_bin.join("taskctl").is_file());
+        assert!(command_bin.join("taskctl").is_symlink());
         deactivate(artifacts);
         assert!(!skills_root.join("manage-taskboard").exists());
         assert!(!runtime_bin.join("taskctl").exists());
+        assert!(!command_bin.join("taskctl").exists());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn command_link_never_overwrites_an_existing_command() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("runtime/taskctl");
+        let destination = root.path().join("user-bin/taskctl");
+        fs::create_dir_all(source.parent().unwrap()).unwrap();
+        fs::create_dir_all(destination.parent().unwrap()).unwrap();
+        fs::write(&source, "injector").unwrap();
+        fs::write(&destination, "user").unwrap();
+
+        assert!(mount_command(&source, &destination).is_err());
+        assert_eq!(fs::read_to_string(destination).unwrap(), "user");
     }
 }

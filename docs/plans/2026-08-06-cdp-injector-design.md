@@ -276,8 +276,11 @@ links Skills into the supported Agent directory and generates command wrappers
 inside an Injector-owned runtime `bin` directory already present in the launched
 Product's PATH. On macOS this generated directory lives under
 `~/Library/Caches/dev.cdp-injector.desktop/Runtime/codex/bin` so shell startup
-cannot split the PATH entry at the space in `Application Support`. Disabling the
-module removes only artifacts owned by that module.
+cannot split the PATH entry at the space in `Application Support`. While the
+module runs, Unix hosts also link each wrapper into `~/.local/bin` so independent
+terminal sessions can resolve it without changing shell configuration. Existing
+same-name Skills and commands are never overwritten. Disabling the module removes
+only artifacts owned by that module.
 An existing same-name Skill is never overwritten and produces a visible partial
 failure. CLI wrappers receive the module service address through
 `CDP_MODULE_SERVICE_URL` and use the bundled Node runtime.

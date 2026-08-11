@@ -476,6 +476,15 @@ impl AppState {
             .home_dir()
             .map_err(|error| error.to_string())?
             .join(".codex/skills");
+        #[cfg(unix)]
+        let command_bin = Some(
+            app.path()
+                .home_dir()
+                .map_err(|error| error.to_string())?
+                .join(".local/bin"),
+        );
+        #[cfg(not(unix))]
+        let command_bin: Option<PathBuf> = None;
         let runtime_bin = self.runtime_bin_dir()?;
         let node = module_service::bundled_node(app)?;
         let (artifacts, status) = agent_integration::activate(
@@ -483,6 +492,7 @@ impl AppState {
             &spec,
             &skills_root,
             &runtime_bin,
+            command_bin.as_deref(),
             &node,
             service_url,
         );
