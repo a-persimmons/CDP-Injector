@@ -21,7 +21,10 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .setup(|app| {
-            app.manage(AppState::load(app.path().app_config_dir()?)?);
+            app.manage(AppState::load(
+                app.path().app_config_dir()?,
+                app.path().app_cache_dir()?.join("Runtime/codex/bin"),
+            )?);
             let menu = Menu::with_items(
                 app,
                 &[

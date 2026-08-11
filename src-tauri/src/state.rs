@@ -144,7 +144,10 @@ impl AppStateData {
 }
 
 impl AppState {
-    pub fn load(config_dir: PathBuf) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn load(
+        config_dir: PathBuf,
+        runtime_bin_dir: PathBuf,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let profile: ProductProfile =
             serde_json::from_str(include_str!("../resources/products/codex.json"))?;
         let settings_path = config_dir.join("settings.json");
@@ -155,7 +158,6 @@ impl AppState {
         };
         let product_id = profile.id.clone();
         let modules_dir = config_dir.join("Modules");
-        let runtime_bin_dir = config_dir.join("Runtime").join("codex").join("bin");
         let installed_modules = module_package::scan_installed(&modules_dir)?;
         let taskboard_manifest: ModuleManifest = serde_json::from_str(include_str!(
             "../../builtin-modules/taskboard/manifest.json"
@@ -651,7 +653,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         let config_dir = std::env::temp_dir().join(format!("cdp-injector-{unique}"));
-        let state = AppState::load(config_dir.clone()).unwrap();
+        let state = AppState::load(config_dir.clone(), config_dir.join("runtime-bin")).unwrap();
 
         {
             let mut data = state.data.blocking_lock();
@@ -664,7 +666,7 @@ mod tests {
             state.persist_settings(&data.settings).unwrap();
         }
 
-        let reloaded = AppState::load(config_dir.clone()).unwrap();
+        let reloaded = AppState::load(config_dir.clone(), config_dir.join("runtime-bin")).unwrap();
         let products = reloaded.data.blocking_lock().product_views();
         assert!(products[0]
             .modules
@@ -676,7 +678,8 @@ mod tests {
 
     #[test]
     fn product_phase_updates() {
-        let state = AppState::load(std::env::temp_dir()).unwrap();
+        let temp = std::env::temp_dir();
+        let state = AppState::load(temp.clone(), temp.join("cdp-injector-runtime")).unwrap();
         let mut data = state.data.blocking_lock();
 
         data.set_product_phase("codex", "starting").unwrap();
@@ -686,7 +689,8 @@ mod tests {
 
     #[test]
     fn product_running_state_reconciles() {
-        let state = AppState::load(std::env::temp_dir()).unwrap();
+        let temp = std::env::temp_dir();
+        let state = AppState::load(temp.clone(), temp.join("cdp-injector-runtime")).unwrap();
         let mut data = state.data.blocking_lock();
 
         data.set_product_phase("codex", "injected").unwrap();
@@ -699,5 +703,14 @@ mod tests {
 
         assert!(!data.reconcile_product_running("codex", true).unwrap());
         assert_eq!(data.product_views()[0].status.phase, "running normally");
+    }
+
+    #[test]
+    fn runtime_bin_can_live_outside_a_config_path_with_spaces() {
+        let config_dir = std::env::temp_dir().join("Application Support/cdp-injector");
+        let runtime_bin = std::env::temp_dir().join("cdp-injector-runtime/bin");
+        let state = AppState::load(config_dir, runtime_bin.clone()).unwrap();
+
+        assert_eq!(state.runtime_bin_dir().unwrap(), runtime_bin);
     }
 }
