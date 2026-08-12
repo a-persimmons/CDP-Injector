@@ -10,6 +10,7 @@ CDP注入器是一个常驻桌面启动器，通过共享的 Product Session 为
 - 安全检查、能力确认和本地安装 `.cdpmod`；
 - 一个 Codex 实例共享一个 CDP 端口与 Product Session；
 - 带本地服务的模块由内置 Node 运行时启动，无需系统 Node 或 `npm install`；
+- 设置页支持手动检查、下载并安装签名更新；
 - 关闭主窗口后驻留托盘，退出时停止模块服务。
 
 ## 开发
@@ -25,7 +26,7 @@ Node 二进制位于 `src-tauri/resources/node/`，只在本地或 CI 构建时�
 ## 自动发布
 
 - 推送到 `main` 或创建 Pull Request：构建四个平台组合并验证可打包。
-- 推送形如 `v0.1.0` 的标签：自动创建 GitHub Release，并上传 macOS ARM、macOS Intel、Windows x64、Linux x64 安装包。
+- 推送形如 `v0.1.0` 的标签：自动创建 GitHub Release，上传四个平台安装包、更新签名与 `latest.json`。
 
 ```bash
 git tag v0.1.0
@@ -33,6 +34,8 @@ git push origin v0.1.0
 ```
 
 macOS 当前使用 ad-hoc 签名。正式分发时可再为 GitHub Actions 配置 Apple Developer 与 Windows 代码签名凭据。
+
+自动更新使用 Tauri updater 签名。GitHub Actions 需要配置 `TAURI_SIGNING_PRIVATE_KEY`，对应私钥必须离线备份；丢失后，已安装版本无法信任用新密钥签名的更新。
 
 ## 官网与文档
 

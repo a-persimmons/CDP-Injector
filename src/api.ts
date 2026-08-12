@@ -103,3 +103,7 @@ export function inspectModulePackage(path: string) {
 export function installModulePackage(path: string) {
   return invoke<void>("install_module_package", { path });
 }
+
+export function restartAfterUpdate() {
+  return invoke<void>("restart_after_update");
+}

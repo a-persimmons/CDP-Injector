@@ -10,6 +10,16 @@ use tauri::Manager;
 use tauri_plugin_opener::OpenerExt;
 
 #[tauri::command]
+pub async fn restart_after_update(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+) -> Result<(), String> {
+    state.begin_quit();
+    state.stop_all_services().await;
+    app.restart();
+}
+
+#[tauri::command]
 pub async fn list_products(
     state: tauri::State<'_, AppState>,
     app: tauri::AppHandle,

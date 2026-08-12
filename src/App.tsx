@@ -18,8 +18,10 @@ import {
   Warning,
   X,
 } from "@phosphor-icons/react";
+import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openFileDialog } from "@tauri-apps/plugin-dialog";
+import { check, type Update } from "@tauri-apps/plugin-updater";
 import {
   inspectModulePackage,
   installModulePackage,
@@ -27,6 +29,7 @@ import {
   listProducts,
   openModuleService,
   prepareLaunch,
+  restartAfterUpdate,
   setModuleEnabled,
   type ModulePackagePreview,
   type ProductView,
@@ -98,7 +101,7 @@ const translations = {
     moduleErrors: "模块错误",
     service: "服务",
     waitingToStart: "等待启动",
-    settingsSubtitle: "调整界面语言与外观",
+    settingsSubtitle: "调整界面语言、外观与软件更新",
     language: "语言",
     languageHint: "选择 CDP注入器 的界面语言",
     chinese: "中文",
@@ -108,6 +111,16 @@ const translations = {
     automatic: "自动",
     light: "亮色",
     dark: "暗色",
+    softwareUpdate: "软件更新",
+    softwareUpdateHint: "当前版本 v{version}",
+    checkForUpdates: "检查更新",
+    checkingForUpdates: "正在检查…",
+    upToDate: "已经是最新版本",
+    updateAvailable: (version: string) => `发现新版本 v${version}`,
+    installUpdate: "更新并重新启动",
+    downloadingUpdate: (progress: number) => `正在下载 ${progress}%`,
+    updateFailed: "检查更新失败",
+    updateUnavailableInPreview: "预览模式不可检查更新",
     normalLaunch: "将以普通方式启动 Codex",
     cdpLaunch: (count: number) => `将通过 CDP 启动并注入 ${count} 个模块`,
     processing: "正在处理 Codex Product Session",
@@ -212,7 +225,7 @@ const translations = {
     moduleErrors: "Module errors",
     service: " service",
     waitingToStart: "Waiting to start",
-    settingsSubtitle: "Adjust the interface language and appearance",
+    settingsSubtitle: "Adjust language, appearance, and software updates",
     language: "Language",
     languageHint: "Choose the language used by CDP Injector",
     chinese: "中文",
@@ -222,6 +235,16 @@ const translations = {
     automatic: "Automatic",
     light: "Light",
     dark: "Dark",
+    softwareUpdate: "Software update",
+    softwareUpdateHint: "Current version v{version}",
+    checkForUpdates: "Check for updates",
+    checkingForUpdates: "Checking…",
+    upToDate: "You're up to date",
+    updateAvailable: (version: string) => `Version ${version} is available`,
+    installUpdate: "Update and restart",
+    downloadingUpdate: (progress: number) => `Downloading ${progress}%`,
+    updateFailed: "Update check failed",
+    updateUnavailableInPreview: "Updates are unavailable in preview mode",
     normalLaunch: "Codex will launch normally",
     cdpLaunch: (count: number) => `Codex will launch through CDP and inject ${count} module${count === 1 ? "" : "s"}`,
     processing: "Processing the Codex Product Session",
@@ -727,6 +750,7 @@ export function App() {
             language={language}
             theme={theme}
             text={text}
+            preview={preview}
             onLanguageChange={setLanguage}
             onThemeChange={setTheme}
           />
@@ -1206,15 +1230,84 @@ function Settings({
   language,
   theme,
   text,
+  preview,
   onLanguageChange,
   onThemeChange,
 }: {
   language: Language;
   theme: Theme;
   text: Translation;
+  preview: boolean;
   onLanguageChange: (language: Language) => void;
   onThemeChange: (theme: Theme) => void;
 }) {
+  const [currentVersion, setCurrentVersion] = useState("…");
+  const [availableUpdate, setAvailableUpdate] = useState<Update | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<
+    "idle" | "checking" | "current" | "available" | "downloading" | "failed"
+  >("idle");
+  const [downloadProgress, setDownloadProgress] = useState(0);
+  const [updateError, setUpdateError] = useState("");
+
+  useEffect(() => {
+    if (preview) {
+      setCurrentVersion("0.1.3");
+      return;
+    }
+    void getVersion().then(setCurrentVersion).catch(() => setCurrentVersion("—"));
+  }, [preview]);
+
+  const checkForUpdates = async () => {
+    if (preview) {
+      setUpdateStatus("failed");
+      setUpdateError(text.updateUnavailableInPreview);
+      return;
+    }
+    setUpdateStatus("checking");
+    setUpdateError("");
+    try {
+      const update = await check();
+      setAvailableUpdate(update);
+      setUpdateStatus(update ? "available" : "current");
+    } catch (reason) {
+      setUpdateStatus("failed");
+      setUpdateError(String(reason));
+    }
+  };
+
+  const installUpdate = async () => {
+    if (!availableUpdate) return;
+    setUpdateStatus("downloading");
+    setDownloadProgress(0);
+    setUpdateError("");
+    let downloaded = 0;
+    let total = 0;
+    try {
+      await availableUpdate.downloadAndInstall((event) => {
+        if (event.event === "Started") total = event.data.contentLength ?? 0;
+        if (event.event === "Progress") {
+          downloaded += event.data.chunkLength;
+          if (total > 0) setDownloadProgress(Math.min(100, Math.round((downloaded / total) * 100)));
+        }
+        if (event.event === "Finished") setDownloadProgress(100);
+      });
+      await restartAfterUpdate();
+    } catch (reason) {
+      setUpdateStatus("failed");
+      setUpdateError(String(reason));
+    }
+  };
+
+  const updateMessage = updateStatus === "current"
+    ? text.upToDate
+    : updateStatus === "available" && availableUpdate
+      ? text.updateAvailable(availableUpdate.version)
+      : updateStatus === "downloading"
+        ? text.downloadingUpdate(downloadProgress)
+        : updateStatus === "failed"
+          ? updateError || text.updateFailed
+          : "";
+
   return (
     <section className="settings-view">
       <div className="workspace-header">
@@ -1251,6 +1344,26 @@ function Settings({
             <option value="dark">{text.dark}</option>
           </select>
         </label>
+        <div className="setting-row">
+          <span>
+            <strong>{text.softwareUpdate}</strong>
+            <small>{updateMessage || text.softwareUpdateHint.replace("{version}", currentVersion)}</small>
+          </span>
+          <button
+            className="setting-action"
+            type="button"
+            disabled={updateStatus === "checking" || updateStatus === "downloading"}
+            onClick={() => void (updateStatus === "available" ? installUpdate() : checkForUpdates())}
+          >
+            {updateStatus === "checking"
+              ? text.checkingForUpdates
+              : updateStatus === "available"
+                ? text.installUpdate
+                : updateStatus === "downloading"
+                  ? text.downloadingUpdate(downloadProgress)
+                  : text.checkForUpdates}
+          </button>
+        </div>
       </div>
     </section>
   );

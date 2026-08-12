@@ -26,6 +26,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .setup(|app| {
             app.manage(AppState::load(
                 app.path().app_config_dir()?,
@@ -71,7 +72,8 @@ pub fn run() {
             commands::install_module_package,
             commands::prepare_launch,
             commands::open_module_service,
-            commands::launch_product
+            commands::launch_product,
+            commands::restart_after_update
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
