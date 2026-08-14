@@ -152,14 +152,7 @@ async fn install_modules(
                 return Err(error);
             }
         };
-        if let Err(error) = session
-            .install_source(
-                module_id.clone(),
-                source,
-                module_id == injection::TASKBOARD_MODULE_ID,
-            )
-            .await
-        {
+        if let Err(error) = session.install_source(module_id.clone(), source).await {
             state.stop_module_service(module_id).await;
             state.stop_agent_integration(module_id).await;
             state

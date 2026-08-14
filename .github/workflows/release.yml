@@ -90,11 +90,12 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: CDP Injector ${{ github.ref_name }}
           releaseBody: |
+            - Fix cold-start CDP injection for Taskboard by avoiding a forced renderer reload during Codex startup.
             - Add signed in-app update checks, download progress, and safe restart.
             - Publish updater metadata and signatures for macOS, Windows, and Linux.
             - Update the bilingual website and user guide for software updates.
 
-            v0.1.2 and earlier must install v0.1.3 manually once. Future releases can be installed from Settings.
+            v0.1.3 is the first release with in-app updates. Older versions must install it manually once; future releases can be installed from Settings.
           releaseDraft: true
           prerelease: false
           updaterJsonPreferNsis: true

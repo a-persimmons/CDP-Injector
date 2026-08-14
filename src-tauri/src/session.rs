@@ -12,7 +12,7 @@ pub struct ProductSession {
     contexts: Vec<TargetContext>,
     connections: BTreeMap<String, Arc<CdpConnection>>,
     script_ids: BTreeMap<(String, String), String>,
-    sources: BTreeMap<String, (String, bool)>,
+    sources: BTreeMap<String, String>,
 }
 
 impl ProductSession {
@@ -94,9 +94,8 @@ impl ProductSession {
         &mut self,
         module_id: String,
         source: String,
-        reload_renderer: bool,
     ) -> Result<(), String> {
-        self.sources.insert(module_id, (source, reload_renderer));
+        self.sources.insert(module_id, source);
         self.inject_missing_targets().await
     }
 
@@ -107,7 +106,7 @@ impl ProductSession {
 
     async fn inject_missing_targets(&mut self) -> Result<(), String> {
         let mut pending = Vec::new();
-        for (module_id, (source, reload_renderer)) in &self.sources {
+        for (module_id, source) in &self.sources {
             for (target_id, connection) in &self.connections {
                 if !self
                     .script_ids
@@ -117,14 +116,13 @@ impl ProductSession {
                         module_id.clone(),
                         target_id.clone(),
                         source.clone(),
-                        *reload_renderer,
                         connection.clone(),
                     ));
                 }
             }
         }
 
-        for (module_id, target_id, source, reload_renderer, connection) in pending {
+        for (module_id, target_id, source, connection) in pending {
             connection
                 .send("Page.enable", json!({}))
                 .await
@@ -149,13 +147,6 @@ impl ProductSession {
                 .and_then(serde_json::Value::as_str)
                 .ok_or("CDP 未返回注入脚本标识")?
                 .to_string();
-            if reload_renderer {
-                connection
-                    .send("Page.reload", json!({}))
-                    .await
-                    .map_err(|error| error.to_string())?;
-                wait_for_document(&connection).await?;
-            }
             let current = connection
                 .send(
                     "Runtime.evaluate",
@@ -212,31 +203,4 @@ impl ProductSession {
         }
         Ok(())
     }
-}
-
-async fn wait_for_document(connection: &CdpConnection) -> Result<(), String> {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
-    while tokio::time::Instant::now() < deadline {
-        if connection
-            .send(
-                "Runtime.evaluate",
-                json!({
-                    "expression": "document.readyState !== 'loading'",
-                    "returnByValue": true
-                }),
-            )
-            .await
-            .ok()
-            .and_then(|result| {
-                result
-                    .pointer("/result/value")
-                    .and_then(serde_json::Value::as_bool)
-            })
-            == Some(true)
-        {
-            return Ok(());
-        }
-        tokio::time::sleep(Duration::from_millis(100)).await;
-    }
-    Err("等待 Codex Renderer 刷新超时".into())
 }
